@@ -1,25 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../services/auth_service.dart';
 
 class LoginPage extends StatelessWidget {
   const LoginPage({super.key});
 
   Future<void> _signInWithGoogle(BuildContext context) async {
     try {
-      // Web/Android 通用：用 google_sign_in 拿到 Google 帳號
+      // 1️⃣ 使用 google_sign_in 取得 Google 使用者
       final googleUser = await GoogleSignIn().signIn();
       if (googleUser == null) return; // 使用者取消
 
       final googleAuth = await googleUser.authentication;
 
+      // 2️⃣ 換成 Firebase credential
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
+      // 3️⃣ Firebase Auth 登入
       final res = await FirebaseAuth.instance.signInWithCredential(credential);
+
       debugPrint('✅ Google 登入成功 uid=${res.user?.uid}');
+
+      // 4️⃣ ⭐ 登入成功後，同步使用者資料到 Firestore
+      await AuthService.syncUserProfile();
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
