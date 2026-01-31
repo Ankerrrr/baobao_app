@@ -3,6 +3,9 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:baobao/widgets/rainbow_menu.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:baobao/services/baby_service.dart';
 
 class InteractiveBaby extends StatefulWidget {
   const InteractiveBaby({super.key});
@@ -109,19 +112,23 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     }
   }
 
-  void _onTap() {
-    // 跳一下 + 愛心值 + 冒愛心 + 點擊成就計數
+  Future<void> _onTap() async {
     if (_ctrl.isAnimating) return;
     _ctrl.forward(from: 0);
-
-    setState(() {
-      _love++;
-    });
 
     _spawnHeart();
     HapticFeedback.selectionClick();
 
     _countTapForAchievement();
+
+    try {
+      await BabyService.addLove(); // ⭐ 同步愛心
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('加愛心失敗：$e')));
+    }
   }
 
   void _showMenu(BuildContext babyCtx) {
@@ -171,30 +178,47 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Center(
-          child: Builder(
-            builder: (babyCtx) => GestureDetector(
-              onTap: _onTap,
-              onLongPress: () => _showMenu(babyCtx),
-              child: AnimatedBuilder(
-                animation: Listenable.merge([_jump, _spin]),
-                builder: (context, child) {
-                  return Transform.translate(
-                    offset: _offset + Offset(0, _jump.value),
-                    child: Transform.rotate(angle: _spin.value, child: child),
-                  );
-                },
-                child: _BabyBody(
-                  mood: _mood,
-                  love: _love,
-                  hearts: _hearts,
-                  onHeartDone: _removeHeart,
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const Center(child: Text('未登入'));
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .snapshots(),
+      builder: (context, snap) {
+        final data = snap.data?.data();
+        final love = (data?['baby']?['love'] as int?) ?? 0;
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            return Center(
+              child: Builder(
+                builder: (babyCtx) => GestureDetector(
+                  onTap: _onTap,
+                  onLongPress: () => _showMenu(babyCtx),
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([_jump, _spin]),
+                    builder: (context, child) {
+                      return Transform.translate(
+                        offset: _offset + Offset(0, _jump.value),
+                        child: Transform.rotate(
+                          angle: _spin.value,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: _BabyBody(
+                      mood: _mood,
+                      love: love, // ⭐ 這裡改成 Firestore 的 love
+                      hearts: _hearts,
+                      onHeartDone: _removeHeart,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
