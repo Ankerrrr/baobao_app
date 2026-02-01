@@ -24,9 +24,11 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   late final AnimationController _spinCtrl;
   late final Animation<double> _spin;
 
+  int _pendingTapCount = 0; // 尚未同步的 tap
   Offset _offset = Offset.zero;
   String _mood = '開心';
   int _love = 0;
+  int _lastKnownPending = 0;
 
   OverlayEntry? _menuEntry;
 
@@ -91,11 +93,14 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _spinCtrl.forward(from: 0);
   }
 
+  void pendingTapCountSetZero() {
+    _pendingTapCount = 0; // 尚未同步的 tap = 0;
+  }
+
   int _tapCount = 0;
   Timer? _tapTimer;
 
   Timer? _syncTimer;
-  int _pendingTapCount = 0; // 尚未同步的 tap
 
   int _displayLove = 0; // 畫面上顯示的 love（不倒退）
   int _lastServerLove = 0; // 可選：記錄 serverLove（debug 用）
@@ -124,23 +129,24 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   }
 
   void _scheduleSync() {
-    // 已經有排程就不用再開
     if (_syncTimer != null) return;
 
     _syncTimer = Timer(_syncInterval, () async {
       final tapsToSync = _pendingTapCount;
-
-      _pendingTapCount = 0;
       _syncTimer = null;
 
       if (tapsToSync <= 0) return;
 
       try {
         await BabyService.syncLove(tapsToSync);
-      } catch (e) {
-        // 如果失敗，把 tapCount 放回去，下次再送
-        _pendingTapCount += tapsToSync;
 
+        if (mounted) {
+          setState(() {
+            _pendingTapCount -= tapsToSync;
+            _lastKnownPending = tapsToSync; // ⭐ 記住：這次是我自己 sync 的
+          });
+        }
+      } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(
             context,
@@ -223,16 +229,29 @@ class _InteractiveBabyState extends State<InteractiveBaby>
       builder: (context, snap) {
         final data = snap.data?.data();
         final serverLove = (data?['baby']?['love'] as int?) ?? 0;
+        final int serverDelta = serverLove - _lastServerLove;
 
+        final int externalDelta = max(0, serverDelta - _lastKnownPending);
+
+        if (externalDelta > 0 && externalDelta < 30) {
+          for (int i = 0; i < externalDelta; i++) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _spawnHeart();
+            });
+          }
+        }
+
+        // reset
+        _lastKnownPending = 0;
+        _lastServerLove = serverLove;
+
+        // optimistic 顯示值
         final optimistic = serverLove + _pendingTapCount;
 
-        // ⭐ 防止往回跳：顯示值永遠取「曾經顯示的最大值」
+        // ⭐ 防止顯示倒退
         if (optimistic > _displayLove) {
           _displayLove = optimistic;
         }
-
-        // （可選）記錄一下 serverLove
-        _lastServerLove = serverLove;
 
         final love = _displayLove;
 
@@ -368,7 +387,7 @@ class _HeartFlyState extends State<_HeartFly>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 3000),
     );
 
     _up = Tween<double>(

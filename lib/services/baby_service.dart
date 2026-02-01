@@ -52,8 +52,6 @@ class BabyService {
         'baby.updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // 6️⃣ 回傳同步後的 love
-      _pendingTapCount = 0;
       return nextLove;
     });
   }
