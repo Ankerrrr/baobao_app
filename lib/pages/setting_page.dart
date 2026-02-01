@@ -45,10 +45,30 @@ class _SettingPageState extends State<SettingPage> {
 
     if (picked == null) return;
 
-    await _db.collection('users').doc(_uid).set({
-      'relationship': {'startDate': Timestamp.fromDate(picked)},
-    }, SetOptions(merge: true));
+    final myRef = _db.collection('users').doc(_uid);
 
+    // 1) 先讀我的 partnerUid
+    final mySnap = await myRef.get();
+    final myData = mySnap.data();
+    final partnerUid = myData?['partnerUid'] as String?;
+
+    // 2) 用 batch 一次寫入（自己 + 對方）
+    final batch = _db.batch();
+    final payload = {
+      'relationship': {
+        'startDate': Timestamp.fromDate(picked),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    };
+
+    batch.set(myRef, payload, SetOptions(merge: true));
+
+    if (partnerUid != null && partnerUid.isNotEmpty) {
+      final partnerRef = _db.collection('users').doc(partnerUid);
+      batch.set(partnerRef, payload, SetOptions(merge: true));
+    }
+
+    await batch.commit();
     setState(() {
       _startDate = picked;
     });
