@@ -19,7 +19,7 @@ class _HomePageState extends State<HomePage> {
 
   final _pages = const [
     InteractiveBaby(),
-    Center(child: Text('照片')),
+    Center(child: Text('日曆')),
     Center(child: Text('分帳')),
   ];
 
@@ -50,6 +50,7 @@ class _HomePageState extends State<HomePage> {
     required User authUser,
     required String? partnerUid,
     required DateTime? startDate,
+    required String myNickname,
   }) {
     showModalBottomSheet(
       context: context,
@@ -72,21 +73,58 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(height: 12),
 
-                // 自己
-                ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: authUser.photoURL != null
-                        ? NetworkImage(authUser.photoURL!)
-                        : null,
-                    child: authUser.photoURL == null
-                        ? const Icon(Icons.person)
-                        : null,
-                  ),
-                  title: Text(authUser.displayName ?? '我'),
-                  subtitle: Text(authUser.email ?? ''),
-                ),
+                // ⭐ 自己（如果有 partnerUid，就從「對方 uid」讀 relationship.nickname，表示對方幫我取的名字）
+                if (partnerUid == null)
+                  ListTile(
+                    leading: CircleAvatar(
+                      backgroundImage: authUser.photoURL != null
+                          ? NetworkImage(authUser.photoURL!)
+                          : null,
+                      child: authUser.photoURL == null
+                          ? const Icon(Icons.person)
+                          : null,
+                    ),
+                    title: Text(authUser.displayName ?? '我'),
+                    subtitle: Text(authUser.email ?? ''),
+                  )
+                else
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(partnerUid)
+                        .snapshots(),
+                    builder: (context, snap) {
+                      final pData = snap.data?.data();
 
-                // 對方（有 partnerUid 才顯示）
+                      // 對方幫我取的暱稱：存在「對方 uid doc」的 relationship.nickname
+                      final partnerRel = pData?['relationship'];
+                      final myNickFromPartner = (partnerRel is Map)
+                          ? (partnerRel['nickname'] as String?)?.trim() ?? ''
+                          : '';
+
+                      final myDisplayName = (authUser.displayName ?? '').trim();
+                      final myTitle = myNickFromPartner.isNotEmpty
+                          ? (myDisplayName.isNotEmpty
+                                ? '$myNickFromPartner（$myDisplayName）'
+                                : myNickFromPartner)
+                          : (myDisplayName.isNotEmpty ? myDisplayName : '我');
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundImage: authUser.photoURL != null
+                              ? NetworkImage(authUser.photoURL!)
+                              : null,
+                          child: authUser.photoURL == null
+                              ? const Icon(Icons.person)
+                              : null,
+                        ),
+                        title: Text(myTitle),
+                        subtitle: Text(authUser.email ?? ''),
+                      );
+                    },
+                  ),
+
+                // ⭐ 對方（顯示：我幫對方取的暱稱，存在「自己的 uid doc」→ 由 myNickname 傳進來）
                 if (partnerUid != null)
                   StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                     stream: FirebaseFirestore.instance
@@ -95,13 +133,18 @@ class _HomePageState extends State<HomePage> {
                         .snapshots(),
                     builder: (context, snap) {
                       final p = snap.data?.data();
-                      final pName =
-                          ((p?['displayName'] as String?)?.trim().isNotEmpty ??
-                              false)
-                          ? (p!['displayName'] as String)
-                          : '未命名';
+
+                      final displayName =
+                          (p?['displayName'] as String?)?.trim() ?? '';
                       final pEmail = (p?['email'] as String?) ?? '';
                       final pPhoto = (p?['photoURL'] as String?) ?? '';
+
+                      // 我幫對方取的暱稱：myNickname（從我的 doc 來）
+                      final pTitle = myNickname.isNotEmpty
+                          ? (displayName.isNotEmpty
+                                ? '$myNickname（$displayName）'
+                                : myNickname)
+                          : (displayName.isNotEmpty ? displayName : '未命名');
 
                       return ListTile(
                         leading: CircleAvatar(
@@ -112,7 +155,7 @@ class _HomePageState extends State<HomePage> {
                               ? const Icon(Icons.person)
                               : null,
                         ),
-                        title: Text(pName),
+                        title: Text(pTitle),
                         subtitle: Text(pEmail),
                       );
                     },
@@ -123,17 +166,11 @@ class _HomePageState extends State<HomePage> {
                 // 交往日期與天數
                 ListTile(
                   leading: const Icon(Icons.favorite),
-                  title: const Text('做兄弟日期'),
-                  subtitle: Text(
+                  title: Text(
                     startDate == null
                         ? '尚未設定'
-                        : '${startDate.year}/${startDate.month.toString().padLeft(2, '0')}/${startDate.day.toString().padLeft(2, '0')}',
+                        : '當了 ${DateTime.now().difference(startDate!).inDays} 天的兄弟',
                   ),
-                  trailing: startDate == null
-                      ? null
-                      : Text(
-                          '總共當了 ${DateTime.now().difference(startDate).inDays} 天的兄弟',
-                        ),
                 ),
 
                 const SizedBox(height: 8),
@@ -175,6 +212,8 @@ class _HomePageState extends State<HomePage> {
         // 讀取我的 Firestore user doc
         final myData = mySnap.data?.data();
         final partnerUid = myData?['partnerUid'] as String?;
+        final myNickname =
+            (myData?['relationship']?['nickname'] as String?)?.trim() ?? '';
 
         final Timestamp? startTs = myData?['relationship']?['startDate'];
         final DateTime? startDate = startTs?.toDate();
@@ -186,7 +225,7 @@ class _HomePageState extends State<HomePage> {
             // ✅ 左邊改成設定 icon + PopupMenu
             leading: PopupMenuButton<String>(
               tooltip: '選單',
-              icon: const Icon(Icons.settings),
+              icon: const Icon(Icons.arrow_drop_down_outlined),
               onSelected: (value) async {
                 if (value == 'logout') {
                   await FirebaseAuth.instance.signOut();
@@ -275,6 +314,7 @@ class _HomePageState extends State<HomePage> {
                       authUser: authUser,
                       partnerUid: partnerUid,
                       startDate: startDate,
+                      myNickname: myNickname,
                     );
                   },
                   child: partnerUid == null
@@ -331,104 +371,104 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// AppBar 下方的小狀態列：顯示已綁定的人
-class _PartnerBar extends StatelessWidget {
-  final String? partnerUid;
-  final Stream<DocumentSnapshot<Map<String, dynamic>>>? partnerStream;
-  final DateTime? startDate;
+// /// AppBar 下方的小狀態列：顯示已綁定的人
+// class _PartnerBar extends StatelessWidget {
+//   final String? partnerUid;
+//   final Stream<DocumentSnapshot<Map<String, dynamic>>>? partnerStream;
+//   final DateTime? startDate;
 
-  const _PartnerBar({
-    required this.partnerUid,
-    required this.partnerStream,
-    required this.startDate,
-  });
+//   const _PartnerBar({
+//     required this.partnerUid,
+//     required this.partnerStream,
+//     required this.startDate,
+//   });
 
-  @override
-  Widget build(BuildContext context) {
-    // 尚未綁定
-    if (partnerUid == null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.link_off, size: 18),
-            const SizedBox(width: 8),
-            Text('尚未綁定任何兄弟對象', style: Theme.of(context).textTheme.bodyMedium),
-          ],
-        ),
-      );
-    }
+//   // @override
+//   // Widget build(BuildContext context) {
+//   //   // 尚未綁定
+//   //   if (partnerUid == null) {
+//   //     return Container(
+//   //       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+//   //       decoration: BoxDecoration(
+//   //         borderRadius: BorderRadius.circular(14),
+//   //         color: Theme.of(context).colorScheme.surfaceContainerHighest,
+//   //       ),
+//   //       child: Row(
+//   //         children: [
+//   //           const Icon(Icons.link_off, size: 18),
+//   //           const SizedBox(width: 8),
+//   //           Text('尚未綁定任何兄弟對象', style: Theme.of(context).textTheme.bodyMedium),
+//   //         ],
+//   //       ),
+//   //     );
+//   //   }
 
-    // 已綁定：讀對方資料
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: partnerStream,
-      builder: (context, snap) {
-        final partner = snap.data?.data();
-        final name =
-            ((partner?['displayName'] as String?)?.trim().isNotEmpty ?? false)
-            ? partner!['displayName']
-            : '未命名';
-        final email = (partner?['email'] as String?) ?? '';
-        final photoURL = (partner?['photoURL'] as String?) ?? '';
+//   //   // 已綁定：讀對方資料
+//   //   // return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+//   //   //   stream: partnerStream,
+//   //   //   builder: (context, snap) {
+//   //   //     final partner = snap.data?.data();
+//   //   //     final name =
+//   //   //         ((partner?['displayName'] as String?)?.trim().isNotEmpty ?? false)
+//   //   //         ? partner!['displayName']
+//   //   //         : '未命名';
+//   //   //     final email = (partner?['email'] as String?) ?? '';
+//   //   //     final photoURL = (partner?['photoURL'] as String?) ?? '';
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundImage: photoURL.isNotEmpty
-                    ? NetworkImage(photoURL)
-                    : null,
-                child: photoURL.isEmpty
-                    ? const Icon(Icons.person, size: 16)
-                    : null,
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        // 👤 名字
-                        Expanded(
-                          child: Text(
-                            '你的兄弟：$name',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+//   //   //     return Container(
+//   //   //       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+//   //   //       decoration: BoxDecoration(
+//   //   //         borderRadius: BorderRadius.circular(14),
+//   //   //         color: Theme.of(context).colorScheme.surfaceContainerHighest,
+//   //   //       ),
+//   //   //       child: Row(
+//   //   //         children: [
+//   //   //           CircleAvatar(
+//   //   //             radius: 16,
+//   //   //             backgroundImage: photoURL.isNotEmpty
+//   //   //                 ? NetworkImage(photoURL)
+//   //   //                 : null,
+//   //   //             child: photoURL.isEmpty
+//   //   //                 ? const Icon(Icons.person, size: 16)
+//   //   //                 : null,
+//   //   //           ),
+//   //   //           const SizedBox(width: 20),
+//   //   //           Expanded(
+//   //   //             child: Column(
+//   //   //               crossAxisAlignment: CrossAxisAlignment.start,
+//   //   //               mainAxisSize: MainAxisSize.min,
+//   //   //               children: [
+//   //   //                 Row(
+//   //   //                   children: [
+//   //   //                     // 👤 名字
+//   //   //                     Expanded(
+//   //   //                       child: Text(
+//   //   //                         '你的兄弟：$name',
+//   //   //                         style: Theme.of(context).textTheme.bodyMedium,
+//   //   //                         overflow: TextOverflow.ellipsis,
+//   //   //                       ),
+//   //   //                     ),
 
-                        // ⏱ 天數（靠右）
-                        if (startDate != null)
-                          Text(
-                            '${DateTime.now().difference(startDate!).inDays} 天',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+//   //   //                     // ⏱ 天數（靠右）
+//   //   //                     if (startDate != null)
+//   //   //                       Text(
+//   //   //                         '${DateTime.now().difference(startDate!).inDays} 天',
+//   //   //                         style: Theme.of(context).textTheme.bodySmall,
+//   //   //                       ),
+//   //   //                   ],
+//   //   //                 ),
+//   //   //               ],
+//   //   //             ),
+//   //   //           ),
 
-              Text('❤️', style: Theme.of(context).textTheme.bodyMedium),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
+//   //   //           Text('❤️', style: Theme.of(context).textTheme.bodyMedium),
+//   //   //         ],
+//   //   //       ),
+//   //   //     );
+//   //   //   },
+//   //   // );
+//   // }
+// }
 
 class _CoupleAvatar extends StatelessWidget {
   final String? myPhotoURL;
