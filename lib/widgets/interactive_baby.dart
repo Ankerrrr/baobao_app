@@ -30,13 +30,8 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
   OverlayEntry? _menuEntry;
 
-  // ❤️ 愛心
   final List<_FloatingHeart> _hearts = [];
   int _heartId = 0;
-
-  // 👆 10 秒內點擊計數
-  int _tapCount = 0;
-  Timer? _tapTimer;
 
   @override
   void initState() {
@@ -64,8 +59,15 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   }
 
   @override
+  @override
   void dispose() {
     _tapTimer?.cancel();
+    _syncTimer?.cancel();
+
+    if (_pendingTapCount > 0) {
+      BabyService.syncLove(_pendingTapCount);
+    }
+
     _spinCtrl.dispose();
     _hideMenu();
     _ctrl.dispose();
@@ -89,9 +91,18 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _spinCtrl.forward(from: 0);
   }
 
+  int _tapCount = 0;
+  Timer? _tapTimer;
+
+  Timer? _syncTimer;
+  int _pendingTapCount = 0; // 尚未同步的 tap
+
+  int _displayLove = 0; // 畫面上顯示的 love（不倒退）
+  int _lastServerLove = 0; // 可選：記錄 serverLove（debug 用）
+  static const Duration _syncInterval = Duration(seconds: 2);
+
   void _countTapForAchievement() {
     final Random _rng = Random();
-    _tapCount++;
 
     // 第一次點：開一個 10 秒窗口
     _tapTimer ??= Timer(const Duration(seconds: 10), () {
@@ -112,23 +123,46 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     }
   }
 
+  void _scheduleSync() {
+    // 已經有排程就不用再開
+    if (_syncTimer != null) return;
+
+    _syncTimer = Timer(_syncInterval, () async {
+      final tapsToSync = _pendingTapCount;
+
+      _pendingTapCount = 0;
+      _syncTimer = null;
+
+      if (tapsToSync <= 0) return;
+
+      try {
+        await BabyService.syncLove(tapsToSync);
+      } catch (e) {
+        // 如果失敗，把 tapCount 放回去，下次再送
+        _pendingTapCount += tapsToSync;
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('同步愛心失敗：$e')));
+        }
+      }
+    });
+  }
+
   Future<void> _onTap() async {
     if (_ctrl.isAnimating) return;
     _ctrl.forward(from: 0);
 
+    _tapCount++;
+    _pendingTapCount++; // ⭐ 累積尚未同步的點擊
+
     _spawnHeart();
-    HapticFeedback.selectionClick();
+    HapticFeedback.heavyImpact();
 
     _countTapForAchievement();
 
-    try {
-      await BabyService.addLove(); // ⭐ 同步愛心
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('加愛心失敗：$e')));
-    }
+    _scheduleSync(); // ⭐ 不直接 sync
   }
 
   void _showMenu(BuildContext babyCtx) {
@@ -188,7 +222,19 @@ class _InteractiveBabyState extends State<InteractiveBaby>
           .snapshots(),
       builder: (context, snap) {
         final data = snap.data?.data();
-        final love = (data?['baby']?['love'] as int?) ?? 0;
+        final serverLove = (data?['baby']?['love'] as int?) ?? 0;
+
+        final optimistic = serverLove + _pendingTapCount;
+
+        // ⭐ 防止往回跳：顯示值永遠取「曾經顯示的最大值」
+        if (optimistic > _displayLove) {
+          _displayLove = optimistic;
+        }
+
+        // （可選）記錄一下 serverLove
+        _lastServerLove = serverLove;
+
+        final love = _displayLove;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -210,7 +256,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                     },
                     child: _BabyBody(
                       mood: _mood,
-                      love: love, // ⭐ 這裡改成 Firestore 的 love
+                      love: love,
                       hearts: _hearts,
                       onHeartDone: _removeHeart,
                     ),

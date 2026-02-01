@@ -163,7 +163,10 @@ class _HomePageState extends State<HomePage> {
             onDestinationSelected: (i) => setState(() => _index = i),
             destinations: const [
               NavigationDestination(icon: Icon(Icons.child_care), label: '寶寶'),
-              NavigationDestination(icon: Icon(Icons.photo), label: '照片'),
+              NavigationDestination(
+                icon: Icon(Icons.calendar_month),
+                label: '日曆',
+              ),
               NavigationDestination(
                 icon: Icon(Icons.receipt_long),
                 label: '分帳',
@@ -239,7 +242,7 @@ class _PartnerBar extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '你的兄弟❤️：$name',
+                      '你的兄弟：$name',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     if (email.isNotEmpty)
@@ -251,7 +254,7 @@ class _PartnerBar extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.link, size: 18),
+              Text('❤️', style: Theme.of(context).textTheme.bodyMedium),
             ],
           ),
         );
