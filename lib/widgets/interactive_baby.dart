@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:baobao/widgets/rainbow_menu.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:baobao/widgets/rainbow_menu.dart';
 import 'package:baobao/services/baby_service.dart';
 
 class InteractiveBaby extends StatefulWidget {
@@ -16,75 +16,105 @@ class InteractiveBaby extends StatefulWidget {
 
 class _InteractiveBabyState extends State<InteractiveBaby>
     with TickerProviderStateMixin {
-  // 跳躍動畫
-  late final AnimationController _ctrl;
+  // Animation
+  late final AnimationController _jumpCtrl;
   late final Animation<double> _jump;
 
-  // 旋轉動畫（成就觸發）
   late final AnimationController _spinCtrl;
   late final Animation<double> _spin;
 
-  int _pendingTapCount = 0; // 尚未同步的 tap
-  Offset _offset = Offset.zero;
-  String _mood = '開心';
-  int _love = 0;
-  int _lastKnownPending = 0;
+  // Love / Sync
+  int _unsyncedTaps = 0;
+  int _lastSelfSynced = 0;
+  int _lastServerLove = 0;
+  int _displayLove = 0;
 
+  static const _syncInterval = Duration(seconds: 2);
+  Timer? _syncTimer;
+
+  // Achievement
+  int _tapCount = 0;
+  Timer? _tapWindow;
+
+  // UI
   OverlayEntry? _menuEntry;
-
   final List<_FloatingHeart> _hearts = [];
   int _heartId = 0;
+
+  final String _mood = '開心';
 
   @override
   void initState() {
     super.initState();
 
-    _ctrl = AnimationController(
+    _jumpCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 150),
     );
 
-    _jump = Tween<double>(
-      begin: 0,
-      end: -18,
-    ).chain(CurveTween(curve: Curves.easeOutBack)).animate(_ctrl);
+    _jump = Tween(
+      begin: 0.0,
+      end: -18.0,
+    ).chain(CurveTween(curve: Curves.easeOutBack)).animate(_jumpCtrl);
 
     _spinCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
     );
 
-    _spin = Tween<double>(
-      begin: 0,
+    _spin = Tween(
+      begin: 0.0,
       end: 2 * pi,
     ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(_spinCtrl);
   }
 
   @override
-  @override
   void dispose() {
-    _tapTimer?.cancel();
+    _tapWindow?.cancel();
     _syncTimer?.cancel();
 
-    if (_pendingTapCount > 0) {
-      BabyService.syncLove(_pendingTapCount);
+    if (_unsyncedTaps > 0) {
+      BabyService.syncLove(_unsyncedTaps);
     }
 
+    _jumpCtrl.dispose();
     _spinCtrl.dispose();
     _hideMenu();
-    _ctrl.dispose();
     super.dispose();
   }
 
-  void _spawnHeart() {
-    final id = _heartId++;
-    final dx = Random().nextDouble() * 80 - 40; // 左右飄 (-40 ~ +40)
-    setState(() => _hearts.add(_FloatingHeart(id: id, dx: dx)));
+  // ===== Actions =====
+
+  void _onTap() {
+    if (_jumpCtrl.isAnimating) return;
+
+    _jumpCtrl.forward(from: 0);
+    HapticFeedback.heavyImpact();
+
+    _unsyncedTaps++;
+    _spawnHeart();
+
+    _handleAchievement();
+    _scheduleSync();
   }
 
-  void _removeHeart(int id) {
-    if (!mounted) return;
-    setState(() => _hearts.removeWhere((h) => h.id == id));
+  void _handleAchievement() {
+    _tapWindow ??= Timer(const Duration(seconds: 10), () {
+      _tapCount = 0;
+      _tapWindow = null;
+    });
+
+    _tapCount++;
+
+    if (_tapCount >= 15) {
+      _tapCount = 0;
+      _tapWindow?.cancel();
+      _tapWindow = null;
+
+      if (Random().nextDouble() < 0.5) {
+        _triggerSpin();
+      }
+    }
   }
 
   void _triggerSpin() {
@@ -93,90 +123,70 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _spinCtrl.forward(from: 0);
   }
 
-  void pendingTapCountSetZero() {
-    _pendingTapCount = 0; // 尚未同步的 tap = 0;
-  }
-
-  int _tapCount = 0;
-  Timer? _tapTimer;
-
-  Timer? _syncTimer;
-
-  int _displayLove = 0; // 畫面上顯示的 love（不倒退）
-  int _lastServerLove = 0; // 可選：記錄 serverLove（debug 用）
-  static const Duration _syncInterval = Duration(seconds: 2);
-
-  void _countTapForAchievement() {
-    final Random _rng = Random();
-
-    // 第一次點：開一個 10 秒窗口
-    _tapTimer ??= Timer(const Duration(seconds: 10), () {
-      _tapCount = 0;
-      _tapTimer = null;
-    });
-
-    if (_tapCount >= 15) {
-      _tapCount = 0;
-      _tapTimer?.cancel();
-      _tapTimer = null;
-
-      // ⭐ 隨機機率觸發旋轉
-      const double spinChance = 0.5;
-      if (_rng.nextDouble() < spinChance) {
-        _triggerSpin();
-      }
-    }
-  }
+  // ===== Sync =====
 
   void _scheduleSync() {
     if (_syncTimer != null) return;
 
     _syncTimer = Timer(_syncInterval, () async {
-      final tapsToSync = _pendingTapCount;
+      final toSync = _unsyncedTaps;
       _syncTimer = null;
 
-      if (tapsToSync <= 0) return;
+      if (toSync <= 0) return;
 
-      try {
-        await BabyService.syncLove(tapsToSync);
+      await BabyService.syncLove(toSync);
 
-        if (mounted) {
-          setState(() {
-            _pendingTapCount -= tapsToSync;
-            _lastKnownPending = tapsToSync; // ⭐ 記住：這次是我自己 sync 的
-          });
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('同步愛心失敗：$e')));
-        }
-      }
+      if (!mounted) return;
+      setState(() {
+        _unsyncedTaps -= toSync;
+        _lastSelfSynced = toSync;
+      });
     });
   }
 
-  Future<void> _onTap() async {
-    if (_ctrl.isAnimating) return;
-    _ctrl.forward(from: 0);
+  void _handleServerLove(int serverLove) {
+    final serverDelta = serverLove - _lastServerLove;
+    final externalDelta = max(0, serverDelta - _lastSelfSynced);
 
-    _tapCount++;
-    _pendingTapCount++; // ⭐ 累積尚未同步的點擊
+    if (externalDelta > 0 && externalDelta < 30) {
+      for (int i = 0; i < externalDelta; i++) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _spawnHeart();
+        });
+      }
+    }
 
-    _spawnHeart();
-    HapticFeedback.heavyImpact();
+    _lastSelfSynced = 0;
+    _lastServerLove = serverLove;
 
-    _countTapForAchievement();
-
-    _scheduleSync(); // ⭐ 不直接 sync
+    final optimistic = serverLove + _unsyncedTaps;
+    _displayLove = max(_displayLove, optimistic);
   }
 
-  void _showMenu(BuildContext babyCtx) {
-    final box = babyCtx.findRenderObject() as RenderBox;
+  // ===== Hearts =====
+
+  void _spawnHeart() {
+    final id = _heartId++;
+    final dx = Random().nextDouble() * 100 - 40;
+    setState(() {
+      _hearts.add(_FloatingHeart(id: id, dx: dx));
+    });
+  }
+
+  void _removeHeart(int id) {
+    if (!mounted) return;
+    setState(() {
+      _hearts.removeWhere((h) => h.id == id);
+    });
+  }
+
+  // ===== Menu =====
+
+  void _showMenu(BuildContext ctx) {
+    final box = ctx.findRenderObject() as RenderBox;
     final center = box.localToGlobal(box.size.center(Offset.zero));
 
     _menuEntry?.remove();
-
     _menuEntry = OverlayEntry(
       builder: (_) => RainbowArcMenuOverlay(
         anchor: center,
@@ -185,23 +195,20 @@ class _InteractiveBabyState extends State<InteractiveBaby>
           ArcMenuItem(
             icon: Icons.restaurant,
             label: '餵食',
-            onTap: () {
-              _hideMenu();
-            },
+            textColor: Colors.orangeAccent,
+            onTap: _hideMenu,
           ),
           ArcMenuItem(
             icon: Icons.favorite,
             label: '討摸摸',
-            onTap: () {
-              _hideMenu();
-            },
+            textColor: Colors.pinkAccent,
+            onTap: _hideMenu,
           ),
           ArcMenuItem(
             icon: Icons.question_answer,
             label: '問答',
-            onTap: () {
-              _hideMenu();
-            },
+            textColor: Colors.lightBlueAccent,
+            onTap: _hideMenu,
           ),
         ],
       ),
@@ -216,6 +223,8 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _menuEntry = null;
   }
 
+  // ===== Build =====
+
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -229,66 +238,37 @@ class _InteractiveBabyState extends State<InteractiveBaby>
       builder: (context, snap) {
         final data = snap.data?.data();
         final serverLove = (data?['baby']?['love'] as int?) ?? 0;
-        final int serverDelta = serverLove - _lastServerLove;
 
-        final int externalDelta = max(0, serverDelta - _lastKnownPending);
+        _handleServerLove(serverLove);
 
-        if (externalDelta > 0 && externalDelta < 30) {
-          for (int i = 0; i < externalDelta; i++) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _spawnHeart();
-            });
-          }
-        }
-
-        // reset
-        _lastKnownPending = 0;
-        _lastServerLove = serverLove;
-
-        // optimistic 顯示值
-        final optimistic = serverLove + _pendingTapCount;
-
-        // ⭐ 防止顯示倒退
-        if (optimistic > _displayLove) {
-          _displayLove = optimistic;
-        }
-
-        final love = _displayLove;
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            return Center(
-              child: Builder(
-                builder: (babyCtx) => GestureDetector(
-                  onTap: _onTap,
-                  onLongPress: () => _showMenu(babyCtx),
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([_jump, _spin]),
-                    builder: (context, child) {
-                      return Transform.translate(
-                        offset: _offset + Offset(0, _jump.value),
-                        child: Transform.rotate(
-                          angle: _spin.value,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: _BabyBody(
-                      mood: _mood,
-                      love: love,
-                      hearts: _hearts,
-                      onHeartDone: _removeHeart,
-                    ),
-                  ),
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 80), // ⭐ 往下 60
+            child: GestureDetector(
+              onTap: _onTap,
+              onLongPress: () => _showMenu(context),
+              child: AnimatedBuilder(
+                animation: Listenable.merge([_jump, _spin]),
+                builder: (_, child) => Transform.translate(
+                  offset: Offset(0, _jump.value),
+                  child: Transform.rotate(angle: _spin.value, child: child),
+                ),
+                child: _BabyBody(
+                  mood: _mood,
+                  love: _displayLove,
+                  hearts: _hearts,
+                  onHeartDone: _removeHeart,
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
   }
 }
+
+// ===== UI Components =====
 
 class _BabyBody extends StatelessWidget {
   final String mood;
@@ -308,8 +288,7 @@ class _BabyBody extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SizedBox(height: 120),
-
+        // const SizedBox(height: 120),
         Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.center,
@@ -321,38 +300,28 @@ class _BabyBody extends StatelessWidget {
                 borderRadius: BorderRadius.circular(60),
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
               ),
-              alignment: Alignment.center,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(60),
-                child: Transform.scale(
-                  scale: 1.1,
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: Image.asset('assets/images/1.png'),
-                  ),
-                ),
+                child: Image.asset('assets/images/1.png', fit: BoxFit.cover),
               ),
             ),
-
-            ...hearts.map((h) {
-              return _HeartFly(
+            ...hearts.map(
+              (h) => _HeartFly(
                 key: ValueKey(h.id),
                 startDx: h.dx,
                 onDone: () => onHeartDone(h.id),
-              );
-            }),
+              ),
+            ),
           ],
         ),
-
         const SizedBox(height: 10),
-
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
-          child: Text('心情：$mood  ·  愛心：$love'),
+          child: Text('心情：$mood · 愛心：$love'),
         ),
       ],
     );
@@ -362,7 +331,7 @@ class _BabyBody extends StatelessWidget {
 class _FloatingHeart {
   final int id;
   final double dx;
-  _FloatingHeart({required this.id, required this.dx});
+  const _FloatingHeart({required this.id, required this.dx});
 }
 
 class _HeartFly extends StatefulWidget {
@@ -385,30 +354,29 @@ class _HeartFlyState extends State<_HeartFly>
   @override
   void initState() {
     super.initState();
+
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3000),
     );
 
-    _up = Tween<double>(
-      begin: 0,
-      end: -120,
+    _up = Tween(
+      begin: 0.0,
+      end: -120.0,
     ).chain(CurveTween(curve: Curves.easeOut)).animate(_ctrl);
 
-    _fade = Tween<double>(
-      begin: 1,
-      end: 0,
+    _fade = Tween(
+      begin: 1.0,
+      end: 0.0,
     ).chain(CurveTween(curve: Curves.easeIn)).animate(_ctrl);
 
-    _scale = Tween<double>(
+    _scale = Tween(
       begin: 0.9,
       end: 1.2,
     ).chain(CurveTween(curve: Curves.easeOut)).animate(_ctrl);
 
-    _ctrl.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        widget.onDone();
-      }
+    _ctrl.addStatusListener((s) {
+      if (s == AnimationStatus.completed) widget.onDone();
     });
 
     _ctrl.forward();
@@ -424,19 +392,17 @@ class _HeartFlyState extends State<_HeartFly>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (context, _) {
-        return Positioned(
-          left: widget.startDx,
-          top: -20 + _up.value,
-          child: Opacity(
-            opacity: _fade.value,
-            child: Transform.scale(
-              scale: _scale.value,
-              child: const Text('❤️', style: TextStyle(fontSize: 30)),
-            ),
+      builder: (_, __) => Positioned(
+        left: widget.startDx + 20,
+        top: -20 + _up.value,
+        child: Opacity(
+          opacity: _fade.value,
+          child: Transform.scale(
+            scale: _scale.value,
+            child: const Text('❤️', style: TextStyle(fontSize: 30)),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

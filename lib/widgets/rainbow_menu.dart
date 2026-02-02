@@ -5,8 +5,14 @@ class ArcMenuItem {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final Color? textColor;
 
-  ArcMenuItem({required this.icon, required this.label, required this.onTap});
+  ArcMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.textColor,
+  });
 }
 
 class RainbowArcMenuOverlay extends StatefulWidget {
@@ -159,7 +165,21 @@ class _ArcButton extends StatelessWidget {
           ),
         ),
 
-        Text(item.label, style: const TextStyle(fontSize: 17)),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.9),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            item.label,
+            style: TextStyle(
+              fontSize: 17,
+              color: item.textColor ?? Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ],
     );
   }

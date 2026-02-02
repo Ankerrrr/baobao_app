@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/interactive_baby.dart';
 import 'invite_page.dart';
 import 'setting_page.dart';
+import 'money_page.dart';
+import 'calendar_page.dart';
 import '../services/auth_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -19,8 +21,8 @@ class _HomePageState extends State<HomePage> {
 
   final _pages = const [
     InteractiveBaby(),
-    Center(child: Text('日曆')),
-    Center(child: Text('分帳')),
+    // Calendar(),
+    MoneyPage(), // ✅ 不是 moneyPage()
   ];
 
   bool _synced = false; // ⭐ 確保只同步一次
