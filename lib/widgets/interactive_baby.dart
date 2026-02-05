@@ -22,6 +22,9 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
   late final AnimationController _spinCtrl;
   late final Animation<double> _spin;
+  Map<String, dynamic>? _countdown;
+
+  String? _relationshipId;
 
   // Love / Sync
   int _unsyncedTaps = 0;
@@ -66,6 +69,19 @@ class _InteractiveBabyState extends State<InteractiveBaby>
       begin: 0.0,
       end: 2 * pi,
     ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(_spinCtrl);
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).get().then((doc) {
+        final partnerUid = doc.data()?['partnerUid'];
+        if (partnerUid != null) {
+          final ids = [uid, partnerUid]..sort();
+          setState(() {
+            _relationshipId = ids.join('_');
+          });
+        }
+      });
+    }
   }
 
   @override
@@ -223,45 +239,140 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _menuEntry = null;
   }
 
+  Widget _buildBabyOnly() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: GestureDetector(
+                onTap: _onTap,
+                onLongPress: () => _showMenu(context),
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_jump, _spin]),
+                  builder: (_, child) => Transform.translate(
+                    offset: Offset(0, _jump.value),
+                    child: Transform.rotate(angle: _spin.value, child: child),
+                  ),
+                  child: _BabyBody(
+                    mood: _mood,
+                    love: _displayLove,
+                    hearts: _hearts,
+                    onHeartDone: _removeHeart,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   // ===== Build =====
 
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const Center(child: Text('未登入'));
+    if (uid == null) {
+      return const Center(child: Text('未登入'));
+    }
 
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
           .snapshots(),
-      builder: (context, snap) {
-        final data = snap.data?.data();
-        final serverLove = (data?['baby']?['love'] as int?) ?? 0;
-
+      builder: (context, userSnap) {
+        final userData = userSnap.data?.data();
+        final serverLove = (userData?['baby']?['love'] as int?) ?? 0;
         _handleServerLove(serverLove);
 
-        return Center(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 80), // ⭐ 往下 60
-            child: GestureDetector(
-              onTap: _onTap,
-              onLongPress: () => _showMenu(context),
-              child: AnimatedBuilder(
-                animation: Listenable.merge([_jump, _spin]),
-                builder: (_, child) => Transform.translate(
-                  offset: Offset(0, _jump.value),
-                  child: Transform.rotate(angle: _spin.value, child: child),
+        final partnerUid = userData?['partnerUid'] as String?;
+        if (partnerUid == null) {
+          // ❌ 沒綁定 → 不顯示倒數
+          return _buildBabyOnly();
+        }
+
+        final ids = [uid, partnerUid]..sort();
+        final relationshipId = ids.join('_');
+
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('relationships')
+              .doc(relationshipId)
+              .snapshots(),
+          builder: (context, relSnap) {
+            final cd = relSnap.data?.data()?['countdown'];
+
+            Widget countdown = const SizedBox.shrink();
+
+            if (cd is Map && cd['enabled'] == true) {
+              final ts = cd['targetAt'];
+
+              if (ts is Timestamp) {
+                final targetAt = ts.toDate(); // ✅ Firestore → Local DateTime
+
+                countdown = CountdownBanner(
+                  key: ValueKey(targetAt.millisecondsSinceEpoch),
+                  targetAt: targetAt,
+                  eventTitle: cd['eventTitle'] ?? '活動',
+                  onClose: () async {
+                    await FirebaseFirestore.instance
+                        .collection('relationships')
+                        .doc(relationshipId)
+                        .update({'countdown.enabled': false});
+                  },
+                );
+              }
+            }
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 340, // ⭐ 你要的寬度（重點）
+                      maxHeight: 150,
+                    ),
+                    child: countdown,
+                  ),
                 ),
-                child: _BabyBody(
-                  mood: _mood,
-                  love: _displayLove,
-                  hearts: _hearts,
-                  onHeartDone: _removeHeart,
+
+                // 👶 原本寶寶互動（完全不動）
+                Expanded(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 40),
+                      child: GestureDetector(
+                        onTap: _onTap,
+                        onLongPress: () => _showMenu(context),
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([_jump, _spin]),
+                          builder: (_, child) => Transform.translate(
+                            offset: Offset(0, _jump.value),
+                            child: Transform.rotate(
+                              angle: _spin.value,
+                              child: child,
+                            ),
+                          ),
+                          child: _BabyBody(
+                            mood: _mood,
+                            love: _displayLove,
+                            hearts: _hearts,
+                            onHeartDone: _removeHeart,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ),
+              ],
+            );
+          },
         );
       },
     );
@@ -400,6 +511,259 @@ class _HeartFlyState extends State<_HeartFly>
           child: Transform.scale(
             scale: _scale.value,
             child: const Text('❤️', style: TextStyle(fontSize: 30)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CountdownBanner extends StatefulWidget {
+  final DateTime targetAt;
+  final String eventTitle;
+  final VoidCallback onClose;
+
+  const CountdownBanner({
+    super.key,
+    required this.targetAt,
+    required this.eventTitle,
+    required this.onClose,
+  });
+
+  @override
+  State<CountdownBanner> createState() => _CountdownBannerState();
+}
+
+class _CountdownBannerState extends State<CountdownBanner>
+    with SingleTickerProviderStateMixin {
+  late Timer _timer;
+  late Duration _remain;
+  int _tapCount = 0;
+  Timer? _tapWindow;
+  bool _rainbowMode = false;
+  late final AnimationController _rainbowCtrl;
+  late final Animation<double> _rainbowShift;
+  bool _rainbowUnlocked = false;
+
+  void _onBannerTap() {
+    // ⭐ 已解鎖彩虹 → 直接切換 ON / OFF
+    if (_rainbowUnlocked) {
+      setState(() {
+        _rainbowMode = !_rainbowMode;
+      });
+
+      if (_rainbowMode) {
+        _rainbowCtrl.repeat(); // 開
+      } else {
+        _rainbowCtrl.stop(); // 關
+      }
+
+      HapticFeedback.selectionClick();
+      return;
+    }
+
+    // ===== 尚未解鎖：成就判定 =====
+
+    _tapWindow ??= Timer(const Duration(seconds: 10), () {
+      _tapCount = 0;
+      _tapWindow = null;
+    });
+
+    _tapCount++;
+
+    if (_tapCount >= 1) {
+      _tapCount = 0;
+      _tapWindow?.cancel();
+      _tapWindow = null;
+
+      setState(() {
+        _rainbowUnlocked = true;
+        _rainbowMode = true;
+      });
+
+      _rainbowCtrl.repeat();
+      HapticFeedback.heavyImpact(); // 🎉 解鎖震動
+    }
+  }
+
+  String _formatRemain(Duration d) {
+    final totalSeconds = d.inSeconds;
+    if (totalSeconds <= 0) return '0 秒';
+
+    final days = d.inDays;
+    final hours = d.inHours % 24;
+    final minutes = d.inMinutes % 60;
+    final seconds = d.inSeconds % 60;
+
+    // ≥ 1 天
+    if (days > 0) {
+      return '$days 天 $hours 小時 $minutes 分';
+    }
+
+    // < 24 小時（顯示秒）
+    if (hours > 0) {
+      return '$hours 小時 $minutes 分 $seconds 秒';
+    }
+
+    // < 1 小時
+    if (minutes > 0) {
+      return '$minutes 分 $seconds 秒';
+    }
+
+    // < 1 分鐘
+    return '$seconds 秒';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _calc();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _calc());
+
+    _rainbowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    );
+
+    _rainbowShift = Tween<double>(
+      begin: 1.0, // 👉 從右邊開始
+      end: -1.0, // 👉 往左流動
+    ).animate(CurvedAnimation(parent: _rainbowCtrl, curve: Curves.linear));
+  }
+
+  void _calc() {
+    final now = DateTime.now();
+    debugPrint(
+      'now=$now (${now.isUtc}) '
+      'target=${widget.targetAt} (${widget.targetAt.isUtc}) '
+      'diff=${widget.targetAt.difference(now).inSeconds}',
+    );
+
+    setState(() {
+      _remain = widget.targetAt.difference(now);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    _tapWindow?.cancel();
+    _rainbowCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_remain.isNegative) {
+      return _box(
+        context,
+        title: '活動開始囉 🎉',
+        content: '「${widget.eventTitle}」',
+        extra: TextButton(
+          onPressed: widget.onClose,
+          child: const Text('關閉計時器'),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _onBannerTap,
+      child: _box(
+        context,
+        title: '距離「${widget.eventTitle}」還有',
+        content: _formatRemain(_remain),
+      ),
+    );
+  }
+
+  Widget _rainbowText(String text, TextStyle? style) {
+    return AnimatedBuilder(
+      animation: _rainbowShift,
+      builder: (context, _) {
+        return ShaderMask(
+          shaderCallback: (bounds) {
+            return const LinearGradient(
+              colors: [
+                Colors.red,
+                Colors.orange,
+                Colors.yellow,
+                Colors.green,
+                Colors.blue,
+                Colors.purple,
+              ],
+              begin: Alignment.centerRight,
+              end: Alignment.centerLeft,
+              tileMode: TileMode.mirror,
+            ).createShader(
+              Rect.fromLTWH(
+                bounds.width * _rainbowShift.value,
+                0,
+                bounds.width,
+                bounds.height,
+              ),
+            );
+          },
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: style?.copyWith(color: Colors.white),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _box(
+    BuildContext context, {
+    required String title,
+    required String content,
+    Widget? extra,
+  }) {
+    final radius = BorderRadius.circular(16);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _onBannerTap,
+        borderRadius: radius,
+        splashFactory: InkRipple.splashFactory,
+        splashColor: Colors.white24,
+        highlightColor: Colors.white10,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: radius,
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.timer, size: 18),
+                  const SizedBox(width: 6),
+                  Text(title),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // 🌈 這裡維持你原本的彩虹 / 一般文字切換
+              _rainbowMode
+                  ? _rainbowText(
+                      content,
+                      Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : Text(
+                      content,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+
+              if (extra != null) ...[const SizedBox(height: 8), extra],
+            ],
           ),
         ),
       ),

@@ -44,13 +44,37 @@ class LoginPage extends StatelessWidget {
   }
 
   Future<void> _signInAnonymously(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('匿名登入提醒'),
+        content: const Text(
+          '匿名登入將不會保存資料喔\n'
+          '是否繼續？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('繼續登入'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
     try {
       final res = await FirebaseAuth.instance.signInAnonymously();
       debugPrint('✅ 匿名登入成功 uid=${res.user?.uid}');
+
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('匿名登入成功')));
+        ).showSnackBar(const SnackBar(content: Text('已使用匿名模式登入')));
       }
     } catch (e) {
       debugPrint('❌ 匿名登入失敗: $e');

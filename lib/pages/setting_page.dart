@@ -16,6 +16,11 @@ class _SettingPageState extends State<SettingPage> {
   bool _loading = true;
   bool _saving = false;
 
+  bool _countdownEnabled = false;
+  Map<String, dynamic>? _countdownEvent;
+
+  String? _relationshipId;
+
   final _uid = FirebaseAuth.instance.currentUser!.uid;
   final _db = FirebaseFirestore.instance;
 
@@ -33,6 +38,27 @@ class _SettingPageState extends State<SettingPage> {
     super.dispose();
   }
 
+  Future<void> _saveCountdown({
+    required bool enabled,
+    Map<String, dynamic>? event,
+  }) async {
+    if (_relationshipId == null) return;
+
+    final payload = <String, dynamic>{
+      'enabled': enabled,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    // ⭐ 只有「啟用時」才存活動
+    if (enabled && event != null) {
+      payload.addAll(event);
+    }
+
+    await _db.collection('relationships').doc(_relationshipId).set({
+      'countdown': payload,
+    }, SetOptions(merge: true));
+  }
+
   Future<void> _loadRelationship() async {
     final snap = await _db.collection('users').doc(_uid).get();
     final data = snap.data();
@@ -40,6 +66,25 @@ class _SettingPageState extends State<SettingPage> {
     final rel = data?['relationship'];
     final ts = (rel is Map) ? rel['startDate'] : null;
     final nick = (rel is Map) ? (rel['nickname'] as String?) : null;
+
+    // ⭐ 取得 relationshipId
+    final partnerUid = data?['partnerUid'] as String?;
+    if (partnerUid != null) {
+      final ids = [_uid, partnerUid]..sort();
+      _relationshipId = ids.join('_');
+
+      // ⭐ 讀 countdown
+      final relDoc = await _db
+          .collection('relationships')
+          .doc(_relationshipId)
+          .get();
+
+      final cd = relDoc.data()?['countdown'];
+      if (cd is Map) {
+        _countdownEnabled = cd['enabled'] == true;
+        _countdownEvent = Map<String, dynamic>.from(cd);
+      }
+    }
 
     setState(() {
       _startDate = ts is Timestamp ? ts.toDate() : null;
@@ -96,6 +141,89 @@ class _SettingPageState extends State<SettingPage> {
     await batch.commit();
     if (!mounted) return;
     setState(() => _saving = false);
+  }
+
+  Future<void> _pickCountdownEvent() async {
+    if (_relationshipId == null) return;
+
+    final picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _db
+              .collection('relationships')
+              .doc(_relationshipId)
+              .collection('events')
+              .orderBy('date')
+              .snapshots(),
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final docs = snap.data!.docs;
+
+            if (docs.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('尚無任何日曆活動'),
+              );
+            }
+
+            return ListView(
+              children: docs.map((d) {
+                final e = d.data();
+                return ListTile(
+                  title: Text(e['title'] ?? ''),
+                  subtitle: Text(e['date'] ?? ''),
+                  onTap: () {
+                    final String dateStr = e['date']; // yyyy-MM-dd
+                    final DateTime baseDate = DateTime.parse(dateStr);
+
+                    DateTime targetAt;
+
+                    if (e['time'] != null) {
+                      final t = (e['time'] as Timestamp).toDate();
+                      targetAt = DateTime(
+                        baseDate.year,
+                        baseDate.month,
+                        baseDate.day,
+                        t.hour,
+                        t.minute,
+                      );
+                    } else {
+                      // ⭐ 沒時間 → 00:00
+                      targetAt = DateTime(
+                        baseDate.year,
+                        baseDate.month,
+                        baseDate.day,
+                        0,
+                        0,
+                      );
+                    }
+
+                    Navigator.pop(context, {
+                      'eventId': d.id,
+                      'eventTitle': e['title'],
+                      'targetAt': Timestamp.fromDate(targetAt), // ⭐ 存真正時間
+                    });
+                  },
+                );
+              }).toList(),
+            );
+          },
+        );
+      },
+    );
+
+    if (picked == null) return;
+
+    setState(() {
+      _countdownEvent = picked;
+    });
+
+    await _saveCountdown(enabled: true, event: picked);
   }
 
   Future<void> _pickDate() async {
@@ -186,7 +314,7 @@ class _SettingPageState extends State<SettingPage> {
                   onTap: _saving ? null : _pickDate,
                 ),
 
-                // 🏷️ 對方暱稱（存在 relationship.nickname）
+                // 🏷️ 對方暱稱
                 ListTile(
                   leading: const Icon(Icons.badge_outlined),
                   title: const Text('對方暱稱'),
@@ -200,6 +328,66 @@ class _SettingPageState extends State<SettingPage> {
                       : const Icon(Icons.chevron_right),
                   onTap: _saving ? null : _editNickname,
                 ),
+
+                const Divider(),
+
+                // ⏱️ 倒數計時器標題
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    '倒數計時器',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+
+                // ⏱️ 啟用倒數
+                SwitchListTile(
+                  secondary: const Icon(Icons.timer_outlined),
+                  title: const Text('啟用倒數計時'),
+                  subtitle: const Text("同時會調整對方的裝置"),
+                  value: _countdownEnabled,
+                  onChanged: (v) async {
+                    setState(() {
+                      _countdownEnabled = v;
+
+                      // ⭐ 關掉 OR 打開，都清掉舊選擇
+                      if (v == false || v == true) {
+                        _countdownEvent = null;
+                      }
+                    });
+
+                    await _saveCountdown(
+                      enabled: v,
+                      event: null, // ⭐ 一律不帶舊 event
+                    );
+                  },
+                ),
+
+                // 📅 選擇活動
+                if (_countdownEnabled)
+                  ListTile(
+                    leading: const Icon(Icons.event),
+                    title: Text(
+                      _countdownEvent == null
+                          ? '選擇日曆活動'
+                          : _countdownEvent!['eventTitle'] ?? '未命名活動',
+                    ),
+                    subtitle: _countdownEvent == null
+                        ? null
+                        : (() {
+                            final ta = _countdownEvent!['targetAt'];
+                            if (ta is! Timestamp) return null;
+
+                            return Text(
+                              DateFormat(
+                                'yyyy/MM/dd HH:mm',
+                              ).format(ta.toDate()),
+                            );
+                          })(),
+
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _pickCountdownEvent,
+                  ),
               ],
             ),
     );

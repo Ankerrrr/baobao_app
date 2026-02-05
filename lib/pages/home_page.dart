@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../widgets/interactive_baby.dart';
 import 'invite_page.dart';
@@ -19,11 +20,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _index = 0;
 
-  final _pages = const [
-    InteractiveBaby(),
-    // Calendar(),
-    MoneyPage(), // ✅ 不是 moneyPage()
-  ];
+  final _pages = const [InteractiveBaby(), CalendarPage(), MoneyPage()];
 
   bool _synced = false; // ⭐ 確保只同步一次
 
@@ -167,31 +164,46 @@ class _HomePageState extends State<HomePage> {
 
                 // 交往日期與天數
                 ListTile(
-                  leading: const Icon(Icons.favorite),
-                  title: Text(
-                    startDate == null
-                        ? '尚未設定'
-                        : '當了 ${DateTime.now().difference(startDate!).inDays} 天的兄弟',
-                  ),
+                  leading: const Icon(Icons.favorite, color: Colors.pink),
+                  title: startDate == null
+                      ? const Text('尚未設定')
+                      : Text.rich(
+                          TextSpan(
+                            children: [
+                              const TextSpan(text: '當了 '),
+                              TextSpan(
+                                text:
+                                    '${DateTime.now().difference(startDate!).inDays} 天',
+                                style: const TextStyle(
+                                  color: Color.fromARGB(255, 249, 19, 157),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              const TextSpan(text: ' 的兄弟'),
+                            ],
+                          ),
+                          style: Theme.of(ctx).textTheme.bodyMedium, // ⭐ 關鍵
+                        ),
                 ),
 
                 const SizedBox(height: 8),
 
-                // 快捷鍵：去設定頁
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.settings),
-                    label: const Text('前往設定'),
-                    onPressed: () {
-                      Navigator.pop(ctx); // 先關 sheet
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SettingPage()),
-                      );
-                    },
-                  ),
-                ),
+                // // 快捷鍵：去設定頁
+                // SizedBox(
+                //   width: double.infinity,
+                //   child: ElevatedButton.icon(
+                //     icon: const Icon(Icons.settings),
+                //     label: const Text('前往設定'),
+                //     onPressed: () {
+                //       Navigator.pop(ctx); // 先關 sheet
+                //       Navigator.push(
+                //         context,
+                //         MaterialPageRoute(builder: (_) => const SettingPage()),
+                //       );
+                //     },
+                //   ),
+                // ),
               ],
             ),
           ),
@@ -224,13 +236,36 @@ class _HomePageState extends State<HomePage> {
           appBar: AppBar(
             title: const Text('寶寶84'),
 
+            surfaceTintColor: const Color.fromARGB(255, 0, 0, 0),
+
             // ✅ 左邊改成設定 icon + PopupMenu
             leading: PopupMenuButton<String>(
               tooltip: '選單',
               icon: const Icon(Icons.arrow_drop_down_outlined),
               onSelected: (value) async {
                 if (value == 'logout') {
-                  await FirebaseAuth.instance.signOut();
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('登出'),
+                      content: const Text('確定要登出嗎？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('取消'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('登出'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirm == true) {
+                    await FirebaseAuth.instance.signOut();
+                    await GoogleSignIn().disconnect(); // ⭐ 強制下次選帳號
+                  }
                 }
 
                 if (value == 'invite') {
