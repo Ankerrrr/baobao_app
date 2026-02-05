@@ -50,6 +50,7 @@ class _HomePageState extends State<HomePage> {
     required String? partnerUid,
     required DateTime? startDate,
     required String myNickname,
+    required String? relationshipId, // ⭐ 新增
   }) {
     showModalBottomSheet(
       context: context,
@@ -160,8 +161,6 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
 
-                const Divider(),
-
                 // 交往日期與天數
                 ListTile(
                   leading: const Icon(Icons.favorite, color: Colors.pink),
@@ -188,6 +187,39 @@ class _HomePageState extends State<HomePage> {
                 ),
 
                 const SizedBox(height: 8),
+                const Divider(),
+                if (relationshipId != null)
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('relationships')
+                        .doc(relationshipId)
+                        .snapshots(),
+                    builder: (context, snap) {
+                      final data = snap.data?.data();
+                      final earned =
+                          data?['foodEarnedBy'] as Map<String, dynamic>? ?? {};
+
+                      final myFood = earned[authUser.uid] as int? ?? 0;
+                      final partnerFood = partnerUid != null
+                          ? (earned[partnerUid] as int? ?? 0)
+                          : 0;
+
+                      return ListTile(
+                        leading: const Icon(
+                          Icons.restaurant,
+                          color: Colors.orange,
+                        ),
+                        title: const Text('飼料貢獻'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('你：$myFood 顆'),
+                            if (partnerUid != null) Text('對方：$partnerFood 顆'),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
 
                 // // 快捷鍵：去設定頁
                 // SizedBox(
@@ -352,6 +384,9 @@ class _HomePageState extends State<HomePage> {
                       partnerUid: partnerUid,
                       startDate: startDate,
                       myNickname: myNickname,
+                      relationshipId: partnerUid == null
+                          ? null
+                          : ([authUser.uid, partnerUid]..sort()).join('_'),
                     );
                   },
                   child: partnerUid == null

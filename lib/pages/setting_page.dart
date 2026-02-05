@@ -44,18 +44,26 @@ class _SettingPageState extends State<SettingPage> {
   }) async {
     if (_relationshipId == null) return;
 
-    final payload = <String, dynamic>{
+    final Map<String, dynamic> countdown = {
       'enabled': enabled,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    // ⭐ 只有「啟用時」才存活動
     if (enabled && event != null) {
-      payload.addAll(event);
+      // ✅ 真正選好活動才存
+      countdown.addAll(event);
+    } else {
+      // ⭐ 啟用 or 關閉時，清掉舊 event
+      countdown.addAll({
+        'eventId': FieldValue.delete(),
+        'eventTitle': FieldValue.delete(),
+        'eventTime': FieldValue.delete(),
+        'targetAt': FieldValue.delete(),
+      });
     }
 
     await _db.collection('relationships').doc(_relationshipId).set({
-      'countdown': payload,
+      'countdown': countdown,
     }, SetOptions(merge: true));
   }
 
@@ -171,42 +179,53 @@ class _SettingPageState extends State<SettingPage> {
               );
             }
 
+            final now = DateTime.now();
+
             return ListView(
               children: docs.map((d) {
                 final e = d.data();
+
+                final String dateStr = e['date']; // yyyy-MM-dd
+                final DateTime baseDate = DateTime.parse(dateStr);
+
+                DateTime targetAt;
+
+                if (e['time'] != null) {
+                  final t = (e['time'] as Timestamp).toDate();
+                  targetAt = DateTime(
+                    baseDate.year,
+                    baseDate.month,
+                    baseDate.day,
+                    t.hour,
+                    t.minute,
+                  );
+                } else {
+                  // 沒時間 → 00:00
+                  targetAt = DateTime(
+                    baseDate.year,
+                    baseDate.month,
+                    baseDate.day,
+                    0,
+                    0,
+                  );
+                }
+
+                // ❌ 已過期 → 不顯示
+                if (targetAt.isBefore(now)) {
+                  return const SizedBox.shrink();
+                }
+
+                // ✅ 未來活動
                 return ListTile(
                   title: Text(e['title'] ?? ''),
-                  subtitle: Text(e['date'] ?? ''),
+                  subtitle: Text(
+                    DateFormat('yyyy/MM/dd HH:mm').format(targetAt),
+                  ),
                   onTap: () {
-                    final String dateStr = e['date']; // yyyy-MM-dd
-                    final DateTime baseDate = DateTime.parse(dateStr);
-
-                    DateTime targetAt;
-
-                    if (e['time'] != null) {
-                      final t = (e['time'] as Timestamp).toDate();
-                      targetAt = DateTime(
-                        baseDate.year,
-                        baseDate.month,
-                        baseDate.day,
-                        t.hour,
-                        t.minute,
-                      );
-                    } else {
-                      // ⭐ 沒時間 → 00:00
-                      targetAt = DateTime(
-                        baseDate.year,
-                        baseDate.month,
-                        baseDate.day,
-                        0,
-                        0,
-                      );
-                    }
-
                     Navigator.pop(context, {
                       'eventId': d.id,
                       'eventTitle': e['title'],
-                      'targetAt': Timestamp.fromDate(targetAt), // ⭐ 存真正時間
+                      'targetAt': Timestamp.fromDate(targetAt),
                     });
                   },
                 );
@@ -349,16 +368,12 @@ class _SettingPageState extends State<SettingPage> {
                   onChanged: (v) async {
                     setState(() {
                       _countdownEnabled = v;
-
-                      // ⭐ 關掉 OR 打開，都清掉舊選擇
-                      if (v == false || v == true) {
-                        _countdownEvent = null;
-                      }
+                      _countdownEvent = null; // UI 先清
                     });
 
                     await _saveCountdown(
                       enabled: v,
-                      event: null, // ⭐ 一律不帶舊 event
+                      event: null, // ⭐ 強制刪掉舊 event
                     );
                   },
                 ),

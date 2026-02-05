@@ -44,8 +44,11 @@ dependencies:
   google_sign_in: ^6.2.1
   cloud_firestore: ^5.4.0
 
+  firebase_messaging: ^15.0.0
+  flutter_local_notifications: ^17.0.0
+
   table_calendar: ^3.0.9
-intl: any
+  intl: any
 
 dev_dependencies:
   flutter_test:
