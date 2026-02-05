@@ -122,7 +122,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
             android: AndroidNotificationDetails(
               'baby_channel',
               '寶寶通知',
-              channelDescription: '來自另一半的訊息',
+              channelDescription: '你兄弟的訊息',
               importance: Importance.max,
               priority: Priority.high,
               icon: '@mipmap/ic_launcher',
@@ -529,6 +529,11 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
         final ids = [uid, partnerUid]..sort();
         final relationshipId = ids.join('_');
+
+        // ⭐⭐⭐ 關鍵中的關鍵
+        if (_relationshipId != relationshipId) {
+          _relationshipId = relationshipId;
+        }
 
         return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance

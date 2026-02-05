@@ -342,7 +342,7 @@ class _HomePageState extends State<HomePage> {
                       children: [
                         Icon(Icons.person_add, size: 18),
                         SizedBox(width: 8),
-                        Text('新增好友'),
+                        Text('新增兄弟'),
                       ],
                     ),
                   ),
