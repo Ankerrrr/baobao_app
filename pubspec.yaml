@@ -50,6 +50,13 @@ dependencies:
   table_calendar: ^3.0.9
   intl: any
 
+  flutter_launcher_icons: ^0.13.1
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

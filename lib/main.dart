@@ -5,10 +5,12 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'package:baobao/services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(); // ⭐ 初始化 Firebase
+  await NotificationService.instance.init();
   runApp(const MyApp());
 }
 

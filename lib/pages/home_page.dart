@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../widgets/interactive_baby.dart';
 import 'invite_page.dart';
 import 'setting_page.dart';
+import 'message_page.dart';
 import 'money_page.dart';
 import 'calendar_page.dart';
 import '../services/auth_service.dart';
@@ -22,7 +23,7 @@ class _HomePageState extends State<HomePage> {
 
   final _pages = const [InteractiveBaby(), CalendarPage(), MoneyPage()];
 
-  bool _synced = false; // ⭐ 確保只同步一次
+  bool _synced = false;
 
   @override
   void initState() {
@@ -50,7 +51,7 @@ class _HomePageState extends State<HomePage> {
     required String? partnerUid,
     required DateTime? startDate,
     required String myNickname,
-    required String? relationshipId, // ⭐ 新增
+    required String? relationshipId,
   }) {
     showModalBottomSheet(
       context: context,
@@ -315,6 +316,19 @@ class _HomePageState extends State<HomePage> {
                     MaterialPageRoute(builder: (_) => const SettingPage()),
                   );
                 }
+
+                if (value == 'messages') {
+                  if (!mounted || partnerUid == null) return;
+
+                  final rid = ([authUser.uid, partnerUid]..sort()).join('_');
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MessagePage(relationshipId: rid),
+                    ),
+                  );
+                }
               },
               itemBuilder: (context) => [
                 // 自己資訊（不可點）
@@ -354,6 +368,17 @@ class _HomePageState extends State<HomePage> {
                       Icon(Icons.tune, size: 18),
                       SizedBox(width: 8),
                       Text('設定'),
+                    ],
+                  ),
+                ),
+
+                const PopupMenuItem<String>(
+                  value: 'messages',
+                  child: Row(
+                    children: [
+                      Icon(Icons.chat_bubble_outline, size: 18),
+                      SizedBox(width: 8),
+                      Text('訊息'),
                     ],
                   ),
                 ),

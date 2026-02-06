@@ -6,9 +6,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:baobao/widgets/rainbow_menu.dart';
 import 'package:baobao/services/baby_service.dart';
-
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:baobao/services/notification_service.dart';
+import 'package:baobao/services/economy_service.dart';
 
 class InteractiveBaby extends StatefulWidget {
   const InteractiveBaby({super.key});
@@ -62,8 +61,6 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   int _heartId = 0;
   int get _uiLove => _serverLove + _unsyncedTaps;
 
-  late final FlutterLocalNotificationsPlugin _localNoti;
-
   final String _mood = '開心';
 
   bool _saidGreetingToday = false;
@@ -93,44 +90,6 @@ class _InteractiveBabyState extends State<InteractiveBaby>
       begin: 0.0,
       end: 2 * pi,
     ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(_spinCtrl);
-
-    // ===== ⭐ 初始化 Local Notification =====
-    _localNoti = FlutterLocalNotificationsPlugin();
-
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidInit);
-
-    _localNoti.initialize(initSettings);
-
-    // ===== ⭐ 前景收到 FCM =====
-    FirebaseMessaging.onMessage.listen((msg) {
-      if (!mounted) return;
-
-      final title = msg.notification?.title ?? '來自寶寶 💌';
-      final body = msg.notification?.body;
-
-      if (body != null && body.isNotEmpty) {
-        // ① 寶寶說話
-        _say(body);
-
-        // ② 跳出系統通知 ⭐⭐⭐
-        _localNoti.show(
-          DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          title,
-          body,
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'baby_channel',
-              '寶寶通知',
-              channelDescription: '你兄弟的訊息',
-              importance: Importance.max,
-              priority: Priority.high,
-              icon: '@mipmap/ic_launcher',
-            ),
-          ),
-        );
-      }
-    });
 
     // ===== 原本問候（保留）=====
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -291,75 +250,6 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     });
   }
 
-  void _showSendNotificationDialog() async {
-    final ctrl = TextEditingController();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('傳送通知給對方'),
-          content: TextField(
-            controller: ctrl,
-            maxLength: 60,
-            decoration: const InputDecoration(hintText: '例如：該Duo一下了'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('送出'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (ok != true) return;
-
-    final text = ctrl.text.trim();
-    if (text.isEmpty) return;
-
-    await _sendNotificationToPartner(text);
-  }
-
-  Future<void> _sendNotificationToPartner(String text) async {
-    if (_relationshipId == null) return;
-
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-
-    final relDoc = await FirebaseFirestore.instance
-        .collection('relationships')
-        .doc(_relationshipId)
-        .get();
-
-    final members = relDoc.data()?['members'] as List?;
-    if (members == null || members.length != 2) return;
-
-    final partnerUid = members.firstWhere((e) => e != uid);
-
-    await FirebaseFirestore.instance
-        .collection('relationships')
-        .doc(_relationshipId)
-        .collection('notifications')
-        .add({
-          'fromUid': uid,
-          'toUid': partnerUid,
-          'text': text,
-          'sent': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-
-    HapticFeedback.mediumImpact();
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('📨 已送出通知')));
-  }
-
   void _handleServerLove(int serverLove) {
     // ⭐ 本地樂觀預期
     final localExpected = _serverLove + _unsyncedTaps;
@@ -445,15 +335,6 @@ class _InteractiveBabyState extends State<InteractiveBaby>
             label: '討摸摸',
             textColor: Colors.pinkAccent,
             onTap: _hideMenu,
-          ),
-          ArcMenuItem(
-            icon: Icons.notifications_active,
-            label: '傳訊息',
-            textColor: Colors.deepPurpleAccent,
-            onTap: () {
-              _hideMenu();
-              _showSendNotificationDialog();
-            },
           ),
         ],
       ),
