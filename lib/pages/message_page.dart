@@ -38,21 +38,21 @@ class _MessagePageState extends State<MessagePage> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // ===== ② 算出 partnerUid =====
-      final relSnap = await relRef.get();
-      final members = List<String>.from(relSnap['members']);
-      final partnerUid = members.firstWhere((e) => e != uid);
+      // ===== ② 跟 NotificationService 一樣：從 users/{uid} 讀 partnerUid =====
+      final mySnap = await db.collection('users').doc(uid).get();
+      final myData = mySnap.data();
+      final partnerUid = myData?['partnerUid'] as String?;
+      if (partnerUid == null) return;
 
-      // ===== ③ 去「對方的 user doc」讀我在他那邊的暱稱 =====
+      // ===== ③ 讀暱稱（這段你原本就 OK）=====
       final partnerSnap = await db.collection('users').doc(partnerUid).get();
       final partnerData = partnerSnap.data();
 
       final myNickname = (partnerData?['relationship']?['nickname'] as String?)
           ?.trim();
 
-      // fallback：我自己的 displayName
-      final mySnap = await db.collection('users').doc(uid).get();
-      final myDisplayName = (mySnap.data()?['displayName'] as String?)?.trim();
+      final mySnap2 = await db.collection('users').doc(uid).get();
+      final myDisplayName = (mySnap2.data()?['displayName'] as String?)?.trim();
 
       final title = (myNickname != null && myNickname.isNotEmpty)
           ? myNickname
@@ -60,13 +60,12 @@ class _MessagePageState extends State<MessagePage> {
           ? myDisplayName
           : '兄弟';
 
-      // ===== ④ 丟給 NotificationService =====
+      // ===== ④ 丟通知 =====
       await NotificationService.instance.sendToPartner(
         relationshipId: widget.relationshipId,
         text: text,
-        title: title, // ⭐ 關鍵
+        title: title,
       );
-      // _scrollToBottom();
     } finally {
       if (mounted) setState(() => _sending = false);
     }

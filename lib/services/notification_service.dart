@@ -95,21 +95,35 @@ class NotificationService {
     required String text,
     required String title,
   }) async {
+    debugPrint('🚀 sendToPartner called');
+
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
 
+    // ✅ ① 跟 MessagePage 一模一樣：從 users/{uid} 讀 partnerUid
+    final mySnap = await _db.collection('users').doc(uid).get();
+    final myData = mySnap.data();
+    final partnerUid = myData?['partnerUid'] as String?;
+
+    if (partnerUid == null) {
+      debugPrint('⚠️ partnerUid is null, abort notification');
+      return;
+    }
+
+    // ✅ ② relationship 是否存在（保險）
     final relRef = _db.collection('relationships').doc(relationshipId);
     final relSnap = await relRef.get();
-    if (!relSnap.exists) return;
+    if (!relSnap.exists) {
+      debugPrint('⚠️ relationship not exists: $relationshipId');
+      return;
+    }
 
-    final List<String> members = List<String>.from(relSnap.data()!['members']);
-    final partnerUid = members.firstWhere((e) => e != uid);
-
+    // ✅ ③ 寫入 notifications（Cloud Function 會接）
     await relRef.collection('notifications').add({
       'fromUid': uid,
       'toUid': partnerUid,
-      'title': title, // ⭐ 通知標題（暱稱）
-      'text': text, // ⭐ 一定要叫 text
+      'title': title, // 通知標題（暱稱）
+      'text': text, // 通知內容
       'sent': false,
       'retryCount': 0,
       'createdAt': FieldValue.serverTimestamp(),
