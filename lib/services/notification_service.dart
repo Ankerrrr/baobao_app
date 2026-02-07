@@ -1,4 +1,3 @@
-// services/notification_service.dart
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -41,7 +40,6 @@ class NotificationService {
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
     FirebaseMessaging.instance.onTokenRefresh.listen(_saveMyToken);
 
-    // ⭐ 主動存一次 token（非常重要）
     final token = await FirebaseMessaging.instance.getToken();
     if (token != null) {
       await _saveMyToken(token);
@@ -51,7 +49,6 @@ class NotificationService {
   // ===== 前景通知 =====
   void _onForegroundMessage(RemoteMessage msg) {
     final data = msg.data;
-
     final title = data['title'] ?? '新訊息';
     final body = data['body'];
 
@@ -95,40 +92,51 @@ class NotificationService {
     required String text,
     required String title,
   }) async {
-    debugPrint('🚀 sendToPartner called');
-
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
 
-    // ✅ ① 跟 MessagePage 一模一樣：從 users/{uid} 讀 partnerUid
+    // 跟 MessagePage 一樣：從 users 讀 partnerUid
     final mySnap = await _db.collection('users').doc(uid).get();
-    final myData = mySnap.data();
-    final partnerUid = myData?['partnerUid'] as String?;
+    final partnerUid = mySnap.data()?['partnerUid'] as String?;
+    if (partnerUid == null) return;
 
-    if (partnerUid == null) {
-      debugPrint('⚠️ partnerUid is null, abort notification');
-      return;
-    }
-
-    // ✅ ② relationship 是否存在（保險）
     final relRef = _db.collection('relationships').doc(relationshipId);
-    final relSnap = await relRef.get();
-    if (!relSnap.exists) {
-      debugPrint('⚠️ relationship not exists: $relationshipId');
-      return;
-    }
+    if (!(await relRef.get()).exists) return;
 
-    // ✅ ③ 寫入 notifications（Cloud Function 會接）
     await relRef.collection('notifications').add({
       'fromUid': uid,
       'toUid': partnerUid,
-      'title': title, // 通知標題（暱稱）
-      'text': text, // 通知內容
+      'title': title,
+      'text': text,
       'sent': false,
       'retryCount': 0,
       'createdAt': FieldValue.serverTimestamp(),
     });
+  }
 
-    debugPrint('📨 notification queued → $partnerUid');
+  // ===== ⭐ 對外提供「通知被點擊」callback =====
+  void setupNotificationTapHandler({
+    required void Function(String relationshipId) onOpenMessage,
+  }) {
+    FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      _handleTap(message, onOpenMessage);
+    });
+
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) {
+        _handleTap(message, onOpenMessage);
+      }
+    });
+  }
+
+  void _handleTap(
+    RemoteMessage message,
+    void Function(String relationshipId) onOpenMessage,
+  ) {
+    final relationshipId = message.data['relationshipId'];
+    if (relationshipId == null) return;
+
+    debugPrint('🔔 notification tapped → $relationshipId');
+    onOpenMessage(relationshipId);
   }
 }

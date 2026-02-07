@@ -23,25 +23,19 @@ exports.sendNotificationOnCreate = onDocumentCreated(
     if (!snap) return;
 
     const data = snap.data();
-    const {
-      toUid,
-      title = "新訊息",
-      text, // ⚠️ 你目前用 text
-      sent,
-    } = data;
+    const { toUid, title = "新訊息", text, sent } = data;
 
-    // 已送過就不處理（避免重複）
     if (sent === true) return;
-
     if (!toUid || !text) {
       console.log("⛔ skip: missing toUid or text");
       return;
     }
 
-    // 取得對方 token
+    // ⭐ 取得 relationshipId（就是路徑裡的 rid）
+    const relationshipId = event.params.rid;
+
     const userDoc = await db.collection("users").doc(toUid).get();
     const token = userDoc.get("fcmToken");
-
     if (!token) {
       console.log("⛔ skip: no fcmToken for", toUid);
       return;
@@ -50,10 +44,19 @@ exports.sendNotificationOnCreate = onDocumentCreated(
     try {
       await admin.messaging().send({
         token,
-        data: {
+
+        // ✅ 背景 / 關閉 App → Android 會自動顯示
+        notification: {
           title,
           body: text,
         },
+
+        // ✅ 點擊後 Flutter 用來導頁
+        data: {
+          relationshipId,
+          type: "message",
+        },
+
         android: {
           priority: "high",
         },
@@ -67,7 +70,6 @@ exports.sendNotificationOnCreate = onDocumentCreated(
       console.log("📨 immediate sent:", snap.ref.path);
     } catch (e) {
       console.error("🔥 immediate send failed:", e);
-      // ❗ 不設 sent，交給 retry
     }
   },
 );
@@ -99,28 +101,29 @@ exports.retryUnsentNotifications = onSchedule(
       const data = doc.data();
       const { toUid, title = "新訊息", text, retryCount = 0 } = data;
 
-      console.log("🔍 retry checking:", doc.ref.path);
+      if (!toUid || !text) continue;
 
-      if (!toUid || !text) {
-        console.log("⛔ skip: missing toUid or text");
-        continue;
-      }
+      // ⭐ 從路徑反推出 relationshipId
+      const relationshipId = doc.ref.parent.parent.id;
 
       const userDoc = await db.collection("users").doc(toUid).get();
       const token = userDoc.get("fcmToken");
-
-      if (!token) {
-        console.log("⛔ skip: no token for", toUid);
-        continue;
-      }
+      if (!token) continue;
 
       try {
         await admin.messaging().send({
           token,
-          data: {
+
+          notification: {
             title,
             body: text,
           },
+
+          data: {
+            relationshipId,
+            type: "message",
+          },
+
           android: {
             priority: "high",
           },
