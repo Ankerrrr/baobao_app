@@ -896,10 +896,7 @@ class _CountdownBannerState extends State<CountdownBanner>
               // 🔽 縮小（一定要有 key）
               ? KeyedSubtree(
                   key: const ValueKey('collapsed'),
-                  child: _compactBox(
-                    context,
-                    text: _formatRemainInline(_remain),
-                  ),
+                  child: _compactBox(context, text: _formatRemain(_remain)),
                 )
               // 🔼 展開（一定要有 key）
               : KeyedSubtree(
@@ -907,7 +904,7 @@ class _CountdownBannerState extends State<CountdownBanner>
                   child: _box(
                     context,
                     title: '距離「${widget.eventTitle}」還有',
-                    content: _formatRemain(_remain),
+                    content: _formatRemainInline(_remain),
                   ),
                 ),
         ),

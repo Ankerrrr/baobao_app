@@ -59,6 +59,11 @@ exports.sendNotificationOnCreate = onDocumentCreated(
 
         android: {
           priority: "high",
+          notification: {
+            channelId: "baby_channel",
+            visibility: "public",
+            sound: "default",
+          },
         },
       });
 
@@ -126,6 +131,11 @@ exports.retryUnsentNotifications = onSchedule(
 
           android: {
             priority: "high",
+            notification: {
+              channelId: "baby_channel", // ⭐ 關鍵！！
+              visibility: "public",
+              sound: "default",
+            },
           },
         });
 

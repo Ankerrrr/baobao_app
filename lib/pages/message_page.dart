@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/notification_service.dart';
+import '../app_runtime_state.dart';
 
 class MessagePage extends StatefulWidget {
   final String relationshipId;
@@ -24,6 +25,7 @@ class _MessagePageState extends State<MessagePage> {
   void initState() {
     super.initState();
     _loadPartnerUid();
+    AppRuntimeState.currentChatRelationshipId = widget.relationshipId;
   }
 
   Future<void> _loadPartnerUid() async {
@@ -117,6 +119,7 @@ class _MessagePageState extends State<MessagePage> {
   void dispose() {
     _ctrl.dispose();
     _scrollCtrl.dispose();
+    AppRuntimeState.currentChatRelationshipId = null;
     super.dispose();
   }
 
@@ -181,7 +184,43 @@ class _MessagePageState extends State<MessagePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('訊息'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('訊息'),
+
+            if (_partnerUid != null)
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(_partnerUid)
+                    .snapshots(),
+                builder: (context, snap) {
+                  final updatedAt =
+                      snap.data?.data()?['battery']?['updatedAt'] as Timestamp?;
+
+                  final status = _formatOnlineStatus(updatedAt);
+                  final isOnline = status == '上線中';
+
+                  return Row(
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        size: 8,
+                        color: isOnline ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        status,
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
         actions: [
           if (_partnerUid != null)
             StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -220,12 +259,8 @@ class _MessagePageState extends State<MessagePage> {
 
                 return IconButton(
                   icon: _BatteryIcon(level: level, isCharging: isCharging),
-                  onPressed: () => _showBatteryInfo(
-                    context,
-                    level,
-                    updatedAt,
-                    isCharging, // ⭐ 傳進去
-                  ),
+                  onPressed: () =>
+                      _showBatteryInfo(context, level, updatedAt, isCharging),
                 );
               },
             ),
@@ -283,6 +318,7 @@ class _MessagePageState extends State<MessagePage> {
               },
             ),
           ),
+
           _buildInputBar(context),
         ],
       ),
@@ -346,6 +382,32 @@ class _MessagePageState extends State<MessagePage> {
         );
       },
     );
+  }
+
+  String _formatOnlineStatus(Timestamp? updatedAt) {
+    if (updatedAt == null) return '離線';
+
+    final last = updatedAt.toDate(); // ✅ 已轉成本地時間
+    final now = DateTime.now();
+    final diff = now.difference(last);
+
+    if (diff.inSeconds < 30) {
+      return '上線中';
+    }
+
+    if (diff.inMinutes < 1 && diff.inSeconds >= 30) {
+      return '${diff.inSeconds} 秒前上線';
+    }
+
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes} 分鐘前上線';
+    }
+
+    if (diff.inHours < 24) {
+      return '${diff.inHours} 小時前上線';
+    }
+
+    return '${diff.inDays} 天前上線';
   }
 
   Widget _buildInputBar(BuildContext context) {

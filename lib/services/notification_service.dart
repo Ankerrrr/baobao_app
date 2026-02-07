@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../app_runtime_state.dart';
 
 class NotificationService {
   NotificationService._();
@@ -48,13 +49,27 @@ class NotificationService {
 
   // ===== 前景通知 =====
   void _onForegroundMessage(RemoteMessage msg) {
-    final data = msg.data;
-    final title = data['title'] ?? '新訊息';
-    final body = data['body'];
+    // ⭐ 1. 先從 notification 讀（背景/前景通用）
+    final notif = msg.notification;
+    final title = notif?.title ?? '新訊息';
+    final body = notif?.body;
 
-    if (body == null || body.toString().isEmpty) return;
+    // ⭐ 2. data 只拿來做邏輯判斷
+    final relationshipId = msg.data['relationshipId'];
 
-    showLocal(title: title.toString(), body: body.toString());
+    if (body == null || body.isEmpty) return;
+
+    // ⭐ 3. 如果正在 MessagePage（同一聊天室）→ 不顯示
+    if (AppRuntimeState.currentChatRelationshipId != null &&
+        AppRuntimeState.currentChatRelationshipId == relationshipId) {
+      debugPrint('🔕 skip foreground notification (already in chat)');
+      return;
+    }
+
+    debugPrint('🔔 show foreground notification');
+
+    // ⭐ 4. 前景一定要自己顯示 local notification
+    showLocal(title: title, body: body);
   }
 
   Future<void> showLocal({required String title, required String body}) async {

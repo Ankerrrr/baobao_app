@@ -249,7 +249,6 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final authUser = FirebaseAuth.instance.currentUser;
     if (authUser == null) {
-      // 理論上不會來到這，保險
       return const Scaffold(body: Center(child: Text('未登入')));
     }
 
