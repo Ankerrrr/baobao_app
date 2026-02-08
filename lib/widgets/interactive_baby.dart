@@ -31,13 +31,25 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   int _serverLove = 0;
 
   String? _relationshipId;
+  String? _partnerPhotoUrl;
 
   // Love / Sync
   int _unsyncedTaps = 0;
   int _lastSelfSynced = 0;
   int _lastServerLove = 0;
   int _displayLove = 0;
+  final List<_PartnerFloat> _partnerFloats = [];
+  int _partnerFloatId = 0;
 
+  int _pendingSelfDelta = 0;
+  Timer? _selfFloatTimer;
+
+  static const _selfFloatWindow = Duration(milliseconds: 400);
+
+  int _pendingPartnerDelta = 0;
+  bool _flushScheduled = false;
+
+  // bool _serverLoveInitialized = false;
   //food
   int _serverFood = 0; // 伺服器同步後的飼料
   int _earnedFood = 0; // 本地尚未同步的飼料
@@ -112,6 +124,32 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     }
   }
 
+  void _queueSelfFloat(int delta) {
+    _pendingSelfDelta += delta;
+
+    // 每次點都重設 timer
+    _selfFloatTimer?.cancel();
+
+    _selfFloatTimer = Timer(_selfFloatWindow, () {
+      if (!mounted) return;
+
+      final merged = _pendingSelfDelta;
+      _pendingSelfDelta = 0;
+
+      if (merged <= 0) return;
+
+      final id = _partnerFloatId++;
+      final dx = Random().nextDouble() * 60 - 30;
+      final myPhotoUrl = FirebaseAuth.instance.currentUser?.photoURL;
+
+      setState(() {
+        _partnerFloats.add(
+          _PartnerFloat(id: id, delta: merged, dx: dx, photoUrl: myPhotoUrl),
+        );
+      });
+    });
+  }
+
   void _maybeSayGreeting() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -122,6 +160,13 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _saidGreetingToday = true;
 
     _say(_timeGreeting(), duration: const Duration(seconds: 6));
+  }
+
+  void _removePartnerFloat(int id) {
+    if (!mounted) return;
+    setState(() {
+      _partnerFloats.removeWhere((e) => e.id == id);
+    });
   }
 
   void _say(String text, {Duration duration = const Duration(seconds: 10)}) {
@@ -184,6 +229,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
     _unsyncedTaps++;
     _spawnHeart();
+    _queueSelfFloat(1);
 
     _tapForFood++;
 
@@ -225,16 +271,19 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   // ===== Sync =====
 
   void _scheduleSync() {
-    if (_syncTimer != null || _relationshipId == null) return;
+    if (_relationshipId == null) return;
+
+    // ⭐ 關鍵：每次點都取消舊 timer
+    _syncTimer?.cancel();
 
     _syncTimer = Timer(_syncInterval, () async {
       final toSyncLove = _unsyncedTaps;
       final toSyncFood = _earnedFood;
 
-      _syncTimer = null;
-
       if (toSyncLove <= 0 && toSyncFood <= 0) return;
+
       _lastSelfSynced = toSyncLove;
+
       await BabyService.syncLoveAndFood(
         relationshipId: _relationshipId!,
         pendingLove: toSyncLove,
@@ -250,42 +299,82 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     });
   }
 
-  void _handleServerLove(int serverLove) {
-    // ⭐ 本地樂觀預期
-    final localExpected = _serverLove + _unsyncedTaps;
+  void _spawnPartnerHearts(int count) {
+    if (count <= 0) return;
 
-    // ⭐ ① 完全一樣 → 直接忽略
-    if (serverLove == localExpected) {
+    int i = 0;
+    Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      _spawnHeart(fromPartner: true);
+      i++;
+
+      if (i >= count) {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _spawnPartnerFloat(int delta) {
+    final id = _partnerFloatId++;
+    final dx = Random().nextDouble() * 80 - 40;
+
+    setState(() {
+      _partnerFloats.add(
+        _PartnerFloat(id: id, delta: delta, dx: dx, photoUrl: _partnerPhotoUrl),
+      );
+    });
+  }
+
+  void _scheduleFlush() {
+    if (_flushScheduled) return;
+    _flushScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final delta = _pendingPartnerDelta;
+      _pendingPartnerDelta = 0;
+      _flushScheduled = false;
+
+      if (delta <= 0) return;
+
+      // ❤️ 愛心動畫最多 99 顆
+      final heartCount = delta > 50 ? 50 : delta;
+
+      // ✅ 現在才安全 setState
+      _spawnPartnerHearts(heartCount);
+
+      // 🧑‍🚀 float 顯示「真實數值」
+      _spawnPartnerFloat(delta);
+    });
+  }
+
+  void _handleServerLove(int serverLove) {
+    // 第一次 snapshot：只設 baseline
+    if (_lastServerLove == 0 && serverLove > 0) {
       _lastServerLove = serverLove;
       return;
     }
 
     final serverDelta = serverLove - _lastServerLove;
-
-    // ⭐ ② 差異太小（<5）→ 視為雜訊，不處理
-    if (serverDelta.abs() < 1) {
+    if (serverDelta <= 0) {
       _lastServerLove = serverLove;
       return;
     }
 
-    // ⭐ ③ 真正來自對方的增量
     final externalDelta = max(0, serverDelta - _lastSelfSynced);
 
-    if (externalDelta > 0 && externalDelta < 30) {
-      for (int i = 0; i < externalDelta; i++) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _spawnHeart(fromPartner: true); // 💙 對方
-        });
-      }
+    if (externalDelta > 0 && externalDelta < 100) {
+      _pendingPartnerDelta += externalDelta;
+      _scheduleFlush(); // ⭐ 不直接動 UI
     }
 
     _lastSelfSynced = 0;
     _lastServerLove = serverLove;
-
-    // ⭐ server 已追上或超過 → 清掉本地暫存
-    if (serverLove >= localExpected) {
-      _unsyncedTaps = 0;
-    }
   }
 
   // ===== Hearts =====
@@ -371,8 +460,10 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                     love: _uiLove,
                     hearts: _hearts,
                     onHeartDone: _removeHeart,
-                    speechText: _speechText, // ⭐⭐⭐ 加這行
+                    speechText: _speechText,
                     speechVisible: _speechVisible,
+                    partnerFloats: _partnerFloats,
+                    onPartnerFloatDone: _removePartnerFloat, // ✅
                   ),
                 ),
               ),
@@ -408,6 +499,20 @@ class _InteractiveBabyState extends State<InteractiveBaby>
           return _buildBabyOnly();
         }
 
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(partnerUid)
+            .get()
+            .then((snap) {
+              final data = snap.data();
+              final url = data?['photoURL'] as String?;
+              if (mounted && url != _partnerPhotoUrl) {
+                setState(() {
+                  _partnerPhotoUrl = url;
+                });
+              }
+            });
+
         final ids = [uid, partnerUid]..sort();
         final relationshipId = ids.join('_');
 
@@ -425,10 +530,11 @@ class _InteractiveBabyState extends State<InteractiveBaby>
             final relData = relSnap.data?.data();
             final cd = relSnap.data?.data()?['countdown'];
             final serverLove = (relData?['love'] as int?) ?? 0;
-            _handleServerLove(serverLove);
 
             _serverFood = (relData?['food'] as int?) ?? 0;
             _serverLove = (relData?['love'] as int?) ?? 0;
+
+            _handleServerLove(serverLove);
 
             Widget countdown = const SizedBox.shrink();
 
@@ -487,8 +593,10 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                             love: _uiLove,
                             hearts: _hearts,
                             onHeartDone: _removeHeart,
-                            speechText: _speechText, // ⭐⭐⭐ 加這行
+                            speechText: _speechText,
                             speechVisible: _speechVisible,
+                            partnerFloats: _partnerFloats,
+                            onPartnerFloatDone: _removePartnerFloat, // ✅
                           ),
                         ),
                       ),
@@ -536,6 +644,7 @@ class _BabyBody extends StatelessWidget {
   final void Function(int id) onHeartDone;
   final String? speechText; // ⭐ 新增
   final bool speechVisible;
+  final List<_PartnerFloat> partnerFloats;
 
   const _BabyBody({
     required this.mood,
@@ -543,8 +652,12 @@ class _BabyBody extends StatelessWidget {
     required this.hearts,
     required this.onHeartDone,
     required this.speechText,
-    required this.speechVisible, // ⭐ 新增
+    required this.speechVisible,
+    required this.partnerFloats,
+    required this.onPartnerFloatDone, // ⭐ 新增
   });
+
+  final void Function(int id) onPartnerFloatDone;
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -586,6 +699,15 @@ class _BabyBody extends StatelessWidget {
                 startDx: h.dx,
                 fromPartner: h.fromPartner,
                 onDone: () => onHeartDone(h.id),
+              ),
+            ),
+            ...partnerFloats.map(
+              (p) => _UserFloat(
+                key: ValueKey('pf_${p.id}'),
+                delta: p.delta,
+                startDx: p.dx,
+                photoUrl: p.photoUrl, // ⭐ 傳進來
+                onDone: () => onPartnerFloatDone(p.id),
               ),
             ),
           ],
@@ -1053,6 +1175,118 @@ class _SpeechBubble extends StatelessWidget {
             child: Icon(Icons.arrow_drop_down, size: 45, color: Colors.white),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _PartnerFloat {
+  final int id;
+  final int delta;
+  final double dx;
+  final String? photoUrl;
+
+  const _PartnerFloat({
+    required this.id,
+    required this.delta,
+    required this.dx,
+    required this.photoUrl,
+  });
+}
+
+class _UserFloat extends StatefulWidget {
+  final int delta;
+  final double startDx;
+  final VoidCallback onDone;
+  final String? photoUrl;
+
+  const _UserFloat({
+    super.key,
+    required this.delta,
+    required this.startDx,
+    required this.photoUrl,
+    required this.onDone,
+  });
+
+  @override
+  State<_UserFloat> createState() => _UserFloatState();
+}
+
+class _UserFloatState extends State<_UserFloat>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _up;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 8000),
+    );
+
+    _up = Tween(
+      begin: 0.0,
+      end: -110.0,
+    ).chain(CurveTween(curve: Curves.easeOut)).animate(_ctrl);
+
+    _fade = Tween(
+      begin: 1.0,
+      end: 0.0,
+    ).chain(CurveTween(curve: Curves.easeIn)).animate(_ctrl);
+
+    _ctrl.addStatusListener((s) {
+      if (s == AnimationStatus.completed) widget.onDone();
+    });
+
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) => Positioned(
+        left: widget.startDx + 20,
+        top: -40 + _up.value,
+        child: Opacity(
+          opacity: _fade.value,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 🧑 對方頭貼
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.grey.shade200,
+                backgroundImage: widget.photoUrl != null
+                    ? NetworkImage(widget.photoUrl!)
+                    : const AssetImage('assets/images/partner.png'),
+              ),
+              const SizedBox(width: 6),
+
+              // ❤️ +N
+              Text(
+                '+${widget.delta}',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.pinkAccent,
+                ),
+              ),
+
+              const SizedBox(width: 4),
+              const Icon(Icons.favorite, color: Colors.pinkAccent, size: 18),
+            ],
+          ),
+        ),
       ),
     );
   }

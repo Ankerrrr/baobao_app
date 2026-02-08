@@ -18,6 +18,7 @@ class _SettingPageState extends State<SettingPage> {
 
   bool _countdownEnabled = false;
   Map<String, dynamic>? _countdownEvent;
+  bool _countdownNotifyEnabled = false;
 
   String? _relationshipId;
 
@@ -46,6 +47,7 @@ class _SettingPageState extends State<SettingPage> {
 
     final Map<String, dynamic> countdown = {
       'enabled': enabled,
+      'notifyEnabled': _countdownNotifyEnabled,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -90,6 +92,7 @@ class _SettingPageState extends State<SettingPage> {
       final cd = relDoc.data()?['countdown'];
       if (cd is Map) {
         _countdownEnabled = cd['enabled'] == true;
+        _countdownNotifyEnabled = cd['notifyEnabled'] == true;
         _countdownEvent = Map<String, dynamic>.from(cd);
       }
     }
@@ -173,9 +176,19 @@ class _SettingPageState extends State<SettingPage> {
             final docs = snap.data!.docs;
 
             if (docs.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('尚無任何日曆活動'),
+              return SizedBox(
+                width: double.infinity, // ⭐ 關鍵：撐滿
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.event_busy, size: 40, color: Colors.grey),
+                      SizedBox(height: 12),
+                      Text('尚無任何日曆活動', textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
               );
             }
 
@@ -354,7 +367,7 @@ class _SettingPageState extends State<SettingPage> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Text(
-                    '倒數計時器',
+                    '倒數計時器(同時會調整對方的裝置)',
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
@@ -363,7 +376,6 @@ class _SettingPageState extends State<SettingPage> {
                 SwitchListTile(
                   secondary: const Icon(Icons.timer_outlined),
                   title: const Text('啟用倒數計時'),
-                  subtitle: const Text("同時會調整對方的裝置"),
                   value: _countdownEnabled,
                   onChanged: (v) async {
                     setState(() {
@@ -402,6 +414,24 @@ class _SettingPageState extends State<SettingPage> {
 
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _pickCountdownEvent,
+                  ),
+                if (_countdownEnabled)
+                  SwitchListTile(
+                    secondary: const Icon(Icons.notifications_active_outlined),
+                    title: const Text('倒數提醒通知'),
+                    subtitle: const Text('忍者點兄弟\n啟用後每天早上將發送通知'),
+                    value: _countdownNotifyEnabled,
+                    onChanged: (v) async {
+                      setState(() {
+                        _countdownNotifyEnabled = v;
+                      });
+
+                      // ⭐ 只更新通知狀態，不動 event
+                      await _saveCountdown(
+                        enabled: true,
+                        event: _countdownEvent,
+                      );
+                    },
                   ),
               ],
             ),

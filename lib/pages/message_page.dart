@@ -395,8 +395,8 @@ class _MessagePageState extends State<MessagePage> {
       return '上線中';
     }
 
-    if (diff.inMinutes < 1 && diff.inSeconds >= 30) {
-      return '${diff.inSeconds} 秒前上線';
+    if (diff.inMinutes < 1 && diff.inSeconds >= 40) {
+      return '30 秒前上線';
     }
 
     if (diff.inMinutes < 60) {
@@ -533,7 +533,6 @@ class _BatteryIcon extends StatelessWidget {
     IconData icon;
 
     if (isCharging) {
-      // ⭐ 只有在充電中
       icon = Icons.battery_charging_full;
     } else if (level >= 90) {
       icon = Icons.battery_full;

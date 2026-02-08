@@ -156,3 +156,150 @@ exports.retryUnsentNotifications = onSchedule(
     }
   },
 );
+
+exports.sendDailyCountdownNotifications = onSchedule(
+  {
+    schedule: "0 8 * * *", // 每天 08:00
+    // schedule: "*/2 * * * *",
+    timeZone: "Asia/Taipei",
+  },
+  async () => {
+    console.log("⏰ daily countdown job start");
+
+    const now = new Date();
+
+    // 撈所有 relationships（資料量不大時 OK）
+    const snap = await db.collection("relationships").get();
+    if (snap.empty) {
+      console.log("ℹ️ no relationships");
+      return;
+    }
+    const TITLE_POOL = [
+      "撐著點兄弟 ",
+      "加油!",
+      "就快到ㄌ",
+      "ㄟㄟ",
+      "快來我這裡",
+      "嘿嘿",
+    ];
+
+    const BODY_POOL = {
+      far: [
+        "距離「{title}」還有 {days} 天，慢來即可",
+        "{days} 天後就是「{title}」，好臍帶",
+        "這邊提醒你一下，「{title}」還有 {days} 天",
+        "「{title}」在不來，就要扁掉了，還有 {days} 天",
+      ],
+      mid: [
+        "再 {days} 天就是「{title}」了 ",
+        "「{title}」痾痾 {days}天 撐著點",
+        "「{title}」 is close，剩 {days} 天 (興奮到飛起)",
+      ],
+      near: [
+        "{title}只剩 {days} 天了，撐住",
+        "{days} 天… 越來越近了，好臍帶",
+        "那是一個美好的日子，花兒綻放著，鳥兒在鳴叫，在這樣的日子裡{title} 只剩 {days}天",
+      ],
+      last: [
+        "{title} 只剩 {days} 天?? ㄟ就是明天!",
+        "{title} is tommorow，我準備好ㄌ",
+      ],
+      today: ["今天就是「{title}」的日子了 耶比!!"],
+    };
+
+    function pickCountdownText(eventTitle, remainDays, seedKey) {
+      const title = TITLE_POOL[Math.abs(hashCode(seedKey)) % TITLE_POOL.length];
+
+      let pool;
+
+      if (remainDays <= 0) {
+        pool = BODY_POOL.today;
+      } else if (remainDays <= 1) {
+        pool = BODY_POOL.last;
+      } else if (remainDays <= 5) {
+        pool = BODY_POOL.near;
+      } else if (remainDays <= 10) {
+        pool = BODY_POOL.mid;
+      } else {
+        pool = BODY_POOL.far;
+      }
+
+      const template =
+        pool[Math.abs(hashCode(seedKey + remainDays)) % pool.length];
+
+      const body = template
+        .replace("{title}", eventTitle ?? "活動")
+        .replace("{days}", remainDays);
+
+      return { title, body };
+    }
+
+    function hashCode(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return hash;
+    }
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const countdown = data.countdown;
+
+      if (!countdown) continue;
+      if (countdown.enabled !== true) continue;
+      if (countdown.notifyEnabled !== true) continue;
+      if (!countdown.targetAt) continue;
+
+      const targetAt = countdown.targetAt.toDate();
+      if (targetAt <= now) continue; // 已過期
+
+      // ===== 計算剩餘天數 =====
+      const diffMs = targetAt - now;
+      const remainDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+      const seedKey = `${doc.id}_${new Date().toDateString()}`;
+      const { title, body } = pickCountdownText(
+        countdown.eventTitle,
+        remainDays,
+        seedKey,
+      );
+      // ===== 取得雙方 UID =====
+      const [uidA, uidB] = doc.id.split("_");
+
+      for (const uid of [uidA, uidB]) {
+        const userDoc = await db.collection("users").doc(uid).get();
+        const token = userDoc.get("fcmToken");
+        if (!token) continue;
+
+        try {
+          await admin.messaging().send({
+            token,
+            notification: {
+              title,
+              body,
+            },
+            data: {
+              type: "countdown",
+              relationshipId: doc.id,
+            },
+            android: {
+              priority: "high",
+              notification: {
+                channelId: "baby_channel",
+                sound: "default",
+              },
+            },
+          });
+
+          console.log(`📤 countdown sent to ${uid}`);
+        } catch (e) {
+          console.error(`🔥 countdown send failed to ${uid}`, e);
+        }
+      }
+    }
+
+    console.log("✅ daily countdown job end");
+  },
+);

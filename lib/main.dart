@@ -20,6 +20,8 @@ void main() async {
   // ✅ 初始化通知
   await NotificationService.instance.init();
 
+  DeviceStatusService.instance.init();
+
   // ✅ 設定「點通知要跳去哪」
   NotificationService.instance.setupNotificationTapHandler(
     onOpenMessage: (relationshipId) {
@@ -69,7 +71,6 @@ class MyApp extends StatelessWidget {
           }
 
           if (snapshot.hasData) {
-            DeviceStatusService.instance.init();
             return const HomePage();
           }
 
