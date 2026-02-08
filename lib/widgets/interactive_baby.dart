@@ -343,7 +343,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
       if (delta <= 0) return;
 
       // ❤️ 愛心動畫最多 99 顆
-      final heartCount = delta > 50 ? 50 : delta;
+      final heartCount = delta > 80 ? 50 : delta;
 
       // ✅ 現在才安全 setState
       _spawnPartnerHearts(heartCount);

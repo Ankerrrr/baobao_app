@@ -242,6 +242,24 @@ exports.sendDailyCountdownNotifications = onSchedule(
       }
       return hash;
     }
+    function calcRemainDays(targetAt) {
+      const now = new Date();
+
+      // 今天 00:00（local）
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      // 目標日 00:00（local）
+      const targetDay = new Date(
+        targetAt.getFullYear(),
+        targetAt.getMonth(),
+        targetAt.getDate(),
+      );
+
+      const diffMs = targetDay - today;
+      const diffDays = Math.round(diffMs / 86400000);
+
+      return Math.max(0, diffDays);
+    }
 
     for (const doc of snap.docs) {
       const data = doc.data();
@@ -253,11 +271,8 @@ exports.sendDailyCountdownNotifications = onSchedule(
       if (!countdown.targetAt) continue;
 
       const targetAt = countdown.targetAt.toDate();
-      if (targetAt <= now) continue; // 已過期
 
-      // ===== 計算剩餘天數 =====
-      const diffMs = targetAt - now;
-      const remainDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      const remainDays = calcRemainDays(targetAt);
 
       const seedKey = `${doc.id}_${new Date().toDateString()}`;
       const { title, body } = pickCountdownText(
