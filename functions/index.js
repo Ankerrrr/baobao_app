@@ -85,7 +85,7 @@ exports.sendNotificationOnCreate = onDocumentCreated(
  * ========================================================= */
 exports.retryUnsentNotifications = onSchedule(
   {
-    schedule: "every 5 minutes",
+    schedule: "every 20 minutes",
     timeZone: "Asia/Taipei",
   },
   async () => {
@@ -160,7 +160,7 @@ exports.retryUnsentNotifications = onSchedule(
 exports.sendDailyCountdownNotifications = onSchedule(
   {
     schedule: "0 8 * * *", // 每天 08:00
-    // schedule: "*/2 * * * *",
+    // schedule: "*/1 * * * *",
     timeZone: "Asia/Taipei",
   },
   async () => {
@@ -242,23 +242,29 @@ exports.sendDailyCountdownNotifications = onSchedule(
       }
       return hash;
     }
+
+    function toTaiwanDate(date) {
+      return new Date(date.getTime() + 8 * 60 * 60 * 1000);
+    }
+
     function calcRemainDays(targetAt) {
-      const now = new Date();
+      const nowTW = toTaiwanDate(new Date());
+      const targetTW = toTaiwanDate(targetAt);
 
-      // 今天 00:00（local）
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-      // 目標日 00:00（local）
-      const targetDay = new Date(
-        targetAt.getFullYear(),
-        targetAt.getMonth(),
-        targetAt.getDate(),
+      const d1 = new Date(
+        nowTW.getFullYear(),
+        nowTW.getMonth(),
+        nowTW.getDate(),
       );
 
-      const diffMs = targetDay.getTime() - Date.now();
-      const diffDays = Math.max(0, Math.floor(diffMs / 86400000));
+      const d2 = new Date(
+        targetTW.getFullYear(),
+        targetTW.getMonth(),
+        targetTW.getDate(),
+      );
 
-      return Math.max(0, diffDays);
+      const msPerDay = 86400000;
+      return Math.floor((d2.getTime() - d1.getTime()) / msPerDay);
     }
 
     for (const doc of snap.docs) {
@@ -274,12 +280,17 @@ exports.sendDailyCountdownNotifications = onSchedule(
 
       const remainDays = calcRemainDays(targetAt);
 
+      if (remainDays < 0) {
+        continue;
+      }
+
       const seedKey = `${doc.id}_${new Date().toDateString()}`;
       const { title, body } = pickCountdownText(
         countdown.eventTitle,
         remainDays,
         seedKey,
       );
+
       // ===== 取得雙方 UID =====
       const [uidA, uidB] = doc.id.split("_");
 
