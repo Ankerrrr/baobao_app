@@ -324,7 +324,12 @@ class _HomePageState extends State<HomePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => MessagePage(relationshipId: rid),
+                      builder: (_) => HeroControllerScope.none(
+                        child: MessagePage(
+                          key: messagePageStateKey, // ⭐⭐⭐
+                          relationshipId: rid,
+                        ),
+                      ),
                     ),
                   );
                 }

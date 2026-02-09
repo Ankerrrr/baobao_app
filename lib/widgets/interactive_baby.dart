@@ -8,6 +8,7 @@ import 'package:baobao/widgets/rainbow_menu.dart';
 import 'package:baobao/services/baby_service.dart';
 import 'package:baobao/services/notification_service.dart';
 import 'package:baobao/services/economy_service.dart';
+import '../pages/message_page.dart';
 
 class InteractiveBaby extends StatefulWidget {
   const InteractiveBaby({super.key});
@@ -32,6 +33,8 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
   String? _relationshipId;
   String? _partnerPhotoUrl;
+
+  String? myName;
 
   // Love / Sync
   int _unsyncedTaps = 0;
@@ -193,6 +196,42 @@ class _InteractiveBabyState extends State<InteractiveBaby>
         _speechText = null;
       });
     });
+  }
+
+  Future<void> _resolveMyName({
+    required String myUid,
+    required String partnerUid,
+    required Map<String, dynamic>? myUserData,
+  }) async {
+    // fallback：自己的 displayName
+    final myDisplayName = (myUserData?['displayName'] as String?)?.trim();
+
+    try {
+      final partnerSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(partnerUid)
+          .get();
+
+      final nicknameFromPartner =
+          (partnerSnap.data()?['relationship']?['nickname'] as String?)?.trim();
+
+      if (!mounted) return;
+
+      setState(() {
+        myName = (nicknameFromPartner != null && nicknameFromPartner.isNotEmpty)
+            ? nicknameFromPartner
+            : (myDisplayName != null && myDisplayName.isNotEmpty)
+            ? myDisplayName
+            : '對方';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        myName = (myDisplayName != null && myDisplayName.isNotEmpty)
+            ? myDisplayName
+            : '對方';
+      });
+    }
   }
 
   void _onGetFood() {
@@ -423,7 +462,30 @@ class _InteractiveBabyState extends State<InteractiveBaby>
             icon: Icons.favorite,
             label: '討摸摸',
             textColor: Colors.pinkAccent,
-            onTap: _hideMenu,
+            onTap: () async {
+              _hideMenu();
+
+              final uid = FirebaseAuth.instance.currentUser!.uid;
+              final rid = _relationshipId;
+              if (rid == null) return;
+
+              await FirebaseFirestore.instance
+                  .collection('relationships')
+                  .doc(rid)
+                  .collection('messages')
+                  .add({
+                    'fromUid': uid,
+                    'type': 'pet_request',
+                    'text': '討摸摸 ❤️',
+                    'createdAt': FieldValue.serverTimestamp(),
+                  });
+
+              await NotificationService.instance.sendToPartner(
+                relationshipId: rid,
+                title: '十萬火急',
+                text: '你兄弟${myName}對你發出Pet Pet 請求, 快去回覆他吧',
+              );
+            },
           ),
         ],
       ),
@@ -492,8 +554,19 @@ class _InteractiveBabyState extends State<InteractiveBaby>
         final userData = userSnap.data?.data();
         // final serverLove = (userData?['baby']?['love'] as int?) ?? 0;
         // _handleServerLove(serverLove);
-
         final partnerUid = userData?['partnerUid'] as String?;
+        if (partnerUid == null) {
+          return _buildBabyOnly();
+        }
+
+        // ⭐ 只在 myName 還沒算過時才抓
+        if (myName == null) {
+          _resolveMyName(
+            myUid: uid,
+            partnerUid: partnerUid,
+            myUserData: userData,
+          );
+        }
         if (partnerUid == null) {
           // ❌ 沒綁定 → 不顯示倒數
           return _buildBabyOnly();

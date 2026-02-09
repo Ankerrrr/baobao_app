@@ -27,7 +27,10 @@ void main() async {
     onOpenMessage: (relationshipId) {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
-          builder: (_) => MessagePage(relationshipId: relationshipId),
+          builder: (_) => MessagePage(
+            key: messagePageStateKey, // ⭐⭐⭐
+            relationshipId: relationshipId,
+          ),
         ),
       );
     },

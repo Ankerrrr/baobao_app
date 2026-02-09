@@ -4,10 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../services/notification_service.dart';
 import '../app_runtime_state.dart';
 
-class MessagePage extends StatefulWidget {
-  final String relationshipId;
+final GlobalKey<_MessagePageState> messagePageStateKey =
+    GlobalKey<_MessagePageState>();
 
-  const MessagePage({super.key, required this.relationshipId});
+class MessagePage extends StatefulWidget {
+  const MessagePage({Key? key, required this.relationshipId}) : super(key: key);
+  final String relationshipId;
 
   @override
   State<MessagePage> createState() => _MessagePageState();
@@ -156,6 +158,55 @@ class _MessagePageState extends State<MessagePage> {
 
     // ⑤ 再擺動（一定看得到）
     key.currentState?.highlight();
+  }
+
+  Future<void> sendPetRequest() async {
+    if (_sending) return;
+
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    setState(() => _sending = true);
+
+    final db = FirebaseFirestore.instance;
+    final relRef = db.collection('relationships').doc(widget.relationshipId);
+
+    try {
+      // 1. 存入 Firestore，增加 type: 'pet_request'
+      await relRef.collection('messages').add({
+        'fromUid': uid,
+        'text': '討摸摸 ❤️', // 預留文字給不支援特殊 UI 的地方看
+        'type': 'pet_request',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. 獲取暱稱邏輯（複用發送訊息的邏輯）
+      final mySnap = await db.collection('users').doc(uid).get();
+      final partnerUid = mySnap.data()?['partnerUid'];
+      if (partnerUid == null) return;
+
+      final partnerSnap = await db.collection('users').doc(partnerUid).get();
+      final myNickname = partnerSnap.data()?['relationship']?['nickname'];
+      final title = (myNickname != null && myNickname.isNotEmpty)
+          ? myNickname
+          : '對方';
+
+      // 3. 發送通知
+      // await NotificationService.instance.sendToPartner(
+      //   relationshipId: widget.relationshipId,
+      //   text: '向你發出了一個討摸摸請求！',
+      //   title: title,
+      // );
+
+      // 滾動到最新
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   void _showBatteryInfo(
@@ -347,6 +398,9 @@ class _MessagePageState extends State<MessagePage> {
                         ? TimeOfDay.fromDateTime(ts.toDate()).format(context)
                         : '';
 
+                    final type = data['type'] as String?;
+                    final petStatus = data['status'] as String?;
+
                     return SwipeToReplyWrapper(
                       onReply: () {
                         setState(() {
@@ -363,6 +417,8 @@ class _MessagePageState extends State<MessagePage> {
                         isMe: isMe,
                         time: time,
                         sent: sent,
+                        type: type, // ⭐⭐⭐ 一定要有
+                        petStatus: petStatus,
                         replyPreview: data['replyTo'],
                       ),
                     );
@@ -525,7 +581,9 @@ class _MessageBubble extends StatefulWidget {
   final bool isMe;
   final String time;
   final bool sent;
+  final String? type;
   final Map<String, dynamic>? replyPreview;
+  final String? petStatus;
 
   const _MessageBubble({
     required this.messageId,
@@ -533,7 +591,9 @@ class _MessageBubble extends StatefulWidget {
     required this.isMe,
     required this.time,
     required this.sent,
+    this.type, // ⭐ 新增
     this.replyPreview,
+    this.petStatus,
     super.key,
   });
 
@@ -571,11 +631,190 @@ class _MessageBubbleState extends State<_MessageBubble>
     super.dispose();
   }
 
+  Widget _buildPetDoneUI(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.pink.shade50,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Text(
+          '你們互相摸摸了 💞',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.pinkAccent,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPetResponseUI(BuildContext context) {
+    return Align(
+      alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.pink.shade200,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: const Text(
+          '摸摸你 💞',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPetRequestUI(BuildContext context) {
+    final status = widget.petStatus;
+    final isAccepted = status == 'accepted';
+
+    if (status == 'accepted') {
+      return _buildPetDoneUI(context);
+    }
+    if (widget.type == 'pet_response') {
+      return _buildPetResponseUI(context);
+    }
+
+    final canTap = !widget.isMe && !isAccepted;
+
+    return GestureDetector(
+      onTap: canTap ? () => _onPetRequestTap(context) : null,
+      child: Align(
+        alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            crossAxisAlignment: widget.isMe
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 14,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isAccepted
+                        ? [Colors.pink.shade100, Colors.pink.shade100]
+                        : [
+                            Colors.pink.shade400,
+                            Colors.pink.shade300,
+                            Colors.orange.shade300,
+                          ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(26),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.pinkAccent.withOpacity(0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isAccepted ? Icons.favorite : Icons.favorite_border,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      isAccepted
+                          ? '你們互相摸摸了 💞'
+                          : (widget.isMe ? '你發出了討摸摸' : '向你討摸摸'),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.time,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onPetRequestTap(BuildContext context) async {
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
+    final pageState = context.findAncestorStateOfType<_MessagePageState>();
+    if (pageState == null) return;
+
+    final db = FirebaseFirestore.instance;
+    final msgRef = db
+        .collection('relationships')
+        .doc(pageState.widget.relationshipId)
+        .collection('messages')
+        .doc(widget.messageId);
+
+    // ① 更新原本的 pet_request
+    await msgRef.update({
+      'status': 'accepted',
+      'acceptedBy': myUid,
+      'acceptedAt': FieldValue.serverTimestamp(),
+    });
+
+    // ② 新增一筆「摸回去」
+    // await msgRef.parent.add({
+    //   'type': 'pet_response',
+    //   'fromUid': myUid,
+    //   'text': '摸摸你 💞',
+    //   'replyTo': {
+    //     'messageId': widget.messageId,
+    //     'text': '討摸摸 ❤️',
+    //     'fromUid': widget.isMe ? myUid : FirebaseAuth.instance.currentUser!.uid,
+    //   },
+    //   'createdAt': FieldValue.serverTimestamp(),
+    // });
+
+    // ③ 發通知
+    await NotificationService.instance.sendToPartner(
+      relationshipId: pageState.widget.relationshipId,
+      title: '你們互相摸摸了 💞',
+      text: '摸摸回去了～',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final Map<String, dynamic>? reply =
+        widget.replyPreview is Map<String, dynamic>
+        ? widget.replyPreview as Map<String, dynamic>
+        : null;
     final bgColor = widget.isMe
         ? Theme.of(context).colorScheme.primaryContainer
         : Theme.of(context).colorScheme.surfaceContainerHighest;
+
+    if (widget.type == 'pet_request') {
+      return _buildPetRequestUI(context);
+    }
 
     return AnimatedBuilder(
       animation: _offset,
@@ -607,10 +846,10 @@ class _MessageBubbleState extends State<_MessageBubble>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (widget.replyPreview != null)
+                    if (reply != null)
                       GestureDetector(
                         onTap: () {
-                          final targetId = widget.replyPreview!['messageId'];
+                          final targetId = reply['messageId'];
                           final pageState = context
                               .findAncestorStateOfType<_MessagePageState>();
                           pageState?._jumpToMessage(targetId);
@@ -643,7 +882,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                                   >(
                                     future: FirebaseFirestore.instance
                                         .collection('users')
-                                        .doc(widget.replyPreview!['fromUid'])
+                                        .doc(reply['fromUid'])
                                         .get(),
                                     builder: (context, snap) {
                                       final photoUrl =
@@ -664,7 +903,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                                   const SizedBox(width: 6),
                                   Flexible(
                                     child: Text(
-                                      widget.replyPreview!['text'] ?? '',
+                                      reply['text'] ?? '',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: Theme.of(
