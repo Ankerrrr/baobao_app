@@ -225,7 +225,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     if (_jumpCtrl.isAnimating) return;
 
     _jumpCtrl.forward(from: 0);
-    HapticFeedback.heavyImpact();
+    HapticFeedback.mediumImpact();
 
     _unsyncedTaps++;
     _spawnHeart();
@@ -558,52 +558,109 @@ class _InteractiveBabyState extends State<InteractiveBaby>
               }
             }
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: 340, // ⭐ 你要的寬度（重點）
-                      maxHeight: 150,
-                    ),
-                    child: countdown,
-                  ),
-                ),
-
-                // 👶 原本寶寶互動（完全不動）
-                Expanded(
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 40),
-                      child: GestureDetector(
-                        onTap: _onTap,
-                        onLongPress: () => _showMenu(context),
-                        child: AnimatedBuilder(
-                          animation: Listenable.merge([_jump, _spin]),
-                          builder: (_, child) => Transform.translate(
-                            offset: Offset(0, _jump.value),
-                            child: Transform.rotate(
-                              angle: _spin.value,
-                              child: child,
+            return SizedBox.expand(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // ===============================
+                  // ① Baby（底層，不會被推）
+                  // ===============================
+                  Positioned.fill(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 120),
+                        Expanded(
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 40),
+                              child: GestureDetector(
+                                onTap: _onTap,
+                                onLongPress: () => _showMenu(context),
+                                child: AnimatedBuilder(
+                                  animation: Listenable.merge([_jump, _spin]),
+                                  builder: (_, child) => Transform.translate(
+                                    offset: Offset(0, _jump.value),
+                                    child: Transform.rotate(
+                                      angle: _spin.value,
+                                      child: child,
+                                    ),
+                                  ),
+                                  child: _BabyBody(
+                                    mood: _mood,
+                                    love: _uiLove,
+                                    hearts: const [],
+                                    onHeartDone: (_) {},
+                                    speechText: _speechText,
+                                    speechVisible: _speechVisible,
+                                    partnerFloats: const [],
+                                    onPartnerFloatDone: (_) {},
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          child: _BabyBody(
-                            mood: _mood,
-                            love: _uiLove,
-                            hearts: _hearts,
-                            onHeartDone: _removeHeart,
-                            speechText: _speechText,
-                            speechVisible: _speechVisible,
-                            partnerFloats: _partnerFloats,
-                            onPartnerFloatDone: _removePartnerFloat, // ✅
-                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ===============================
+                  // ② Countdown（中層）✅ 現在會真的置中
+                  // ===============================
+                  // 在 InteractiveBaby 的 build 方法中尋找這段
+                  // ===============================
+                  // ② Countdown（中層）
+                  // ===============================
+                  // ===============================
+                  // ② Countdown（中層）
+                  // ===============================
+                  Positioned(
+                    top: 8,
+                    left: 0, // 撐滿左右邊界
+                    right: 0,
+                    child: Center(
+                      // 確保在撐滿的空間中水平置中
+                      child: UnconstrainedBox(
+                        // 讓內部的 Banner 可以自由調整寬度，不會被父層強制撐開
+                        child: SizedBox(
+                          height: 140, // ⭐ 固定一個能容納 expanded 的高度
+                          child: Center(child: countdown),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+
+                  // ===============================
+                  // ③ ❤️ 愛心 / float（最上層）
+                  // ===============================
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          ..._hearts.map(
+                            (h) => _HeartFly(
+                              key: ValueKey(h.id),
+                              startDx: h.dx,
+                              fromPartner: h.fromPartner,
+                              onDone: () => _removeHeart(h.id),
+                            ),
+                          ),
+                          ..._partnerFloats.map(
+                            (p) => _UserFloat(
+                              key: ValueKey('pf_${p.id}'),
+                              delta: p.delta,
+                              startDx: p.dx,
+                              photoUrl: p.photoUrl,
+                              onDone: () => _removePartnerFloat(p.id),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -803,8 +860,8 @@ class _HeartFlyState extends State<_HeartFly>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (_, __) => Positioned(
-        left: widget.startDx + 20,
-        top: -20 + _up.value,
+        left: widget.startDx + 90,
+        top: 250 + _up.value,
         child: Opacity(
           opacity: _fade.value,
           child: Transform.scale(
@@ -813,7 +870,7 @@ class _HeartFlyState extends State<_HeartFly>
               Icons.favorite,
               size: 30,
               color: widget.fromPartner
-                  ? const Color.fromARGB(255, 96, 44, 66) // 💙 對方
+                  ? const Color.fromARGB(255, 255, 119, 210) // 💙 對方
                   : Colors.pinkAccent, // 💗 自己
             ),
           ),
@@ -963,29 +1020,26 @@ class _CountdownBannerState extends State<CountdownBanner>
   Widget _compactBox(BuildContext context, {required String text}) {
     return Material(
       color: Colors.transparent,
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // ⏱ 時鐘 icon（縮小專用）
-            const Icon(Icons.timer, size: 18),
-            const SizedBox(width: 6),
-
-            // ⏳ 倒數文字（單列）
-            Text(
-              text,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, anim) {
+          return SizeTransition(
+            sizeFactor: anim,
+            axisAlignment: -1.0,
+            child: FadeTransition(opacity: anim, child: child),
+          );
+        },
+        child: _collapsed
+            ? KeyedSubtree(
+                key: const ValueKey('mini'),
+                child: _MiniWrapper(child: _mini(context)),
+              )
+            : KeyedSubtree(
+                key: const ValueKey('expanded'),
+                child: _ExpandedWrapper(child: _expanded(context)),
+              ),
       ),
     );
   }
@@ -1006,30 +1060,84 @@ class _CountdownBannerState extends State<CountdownBanner>
 
     return GestureDetector(
       onTap: _onBannerTap,
-      child: AnimatedSize(
-        duration: const Duration(milliseconds: 50),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.topCenter,
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          transitionBuilder: (child, anim) =>
-              ScaleTransition(scale: anim, child: child),
-          child: _collapsed
-              // 🔽 縮小（一定要有 key）
-              ? KeyedSubtree(
-                  key: const ValueKey('collapsed'),
-                  child: _compactBox(context, text: _formatRemain(_remain)),
+      // 移除外層 Container 的 width: double.infinity
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
+          return Stack(
+            alignment: Alignment.center, // 關鍵：對齊中心
+            children: <Widget>[
+              ...previousChildren,
+              if (currentChild != null) currentChild,
+            ],
+          );
+        },
+        transitionBuilder: (child, anim) {
+          return SizeTransition(
+            sizeFactor: anim,
+            axisAlignment: 0.0,
+            axis: Axis.horizontal, // 水平展開
+            child: FadeTransition(opacity: anim, child: child),
+          );
+        },
+        child: _collapsed
+            ? _MiniWrapper(key: const ValueKey('mini'), child: _mini(context))
+            : _ExpandedWrapper(
+                key: const ValueKey('expanded'),
+                child: _expanded(context),
+              ),
+      ),
+    );
+  }
+
+  Widget _mini(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.timer, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            _formatRemain(_remain),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _expanded(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.timer, size: 18),
+              const SizedBox(width: 6),
+              Text('距離「${widget.eventTitle}」還有'),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _rainbowMode
+              ? _rainbowText(
+                  _formatRemainInline(_remain),
+                  Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 )
-              // 🔼 展開（一定要有 key）
-              : KeyedSubtree(
-                  key: const ValueKey('expanded'),
-                  child: _box(
-                    context,
-                    title: '距離「${widget.eventTitle}」還有',
-                    content: _formatRemainInline(_remain),
+              : Text(
+                  _formatRemainInline(_remain),
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-        ),
+        ],
       ),
     );
   }
@@ -1255,8 +1363,8 @@ class _UserFloatState extends State<_UserFloat>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (_, __) => Positioned(
-        left: widget.startDx + 20,
-        top: -40 + _up.value,
+        left: widget.startDx + 90,
+        top: 150 + _up.value,
         child: Opacity(
           opacity: _fade.value,
           child: Row(
@@ -1287,6 +1395,44 @@ class _UserFloatState extends State<_UserFloat>
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MiniWrapper extends StatelessWidget {
+  final Widget child;
+  const _MiniWrapper({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      // 移除 IntrinsicWidth，改用合理的 padding 即可
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(20), // 圓角大一點比較像膠囊
+      ),
+      child: child,
+    );
+  }
+}
+
+class _ExpandedWrapper extends StatelessWidget {
+  final Widget child;
+  const _ExpandedWrapper({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 340, // ⭐ 明確指定
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: child,
       ),
     );
   }
