@@ -621,6 +621,17 @@ class _MessageBubbleState extends State<_MessageBubble>
     ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
   }
 
+  void showBigDogEmoji(BuildContext context) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+
+    entry = OverlayEntry(
+      builder: (_) => _BigDogEmojiOverlay(onFinish: () => entry.remove()),
+    );
+
+    overlay.insert(entry);
+  }
+
   void highlight() {
     _ctrl.forward(from: 0);
   }
@@ -632,21 +643,24 @@ class _MessageBubbleState extends State<_MessageBubble>
   }
 
   Widget _buildPetDoneUI(BuildContext context) {
-    return Align(
-      alignment: Alignment.center,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.pink.shade50,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: const Text(
-          '你們互相摸摸了 💞',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.pinkAccent,
+    return GestureDetector(
+      onTap: () => showBigDogEmoji(context),
+      child: Align(
+        alignment: Alignment.center,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.pink.shade50,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Text(
+            '你們互相摸摸了 💞',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.pinkAccent,
+            ),
           ),
         ),
       ),
@@ -797,8 +811,8 @@ class _MessageBubbleState extends State<_MessageBubble>
     // ③ 發通知
     await NotificationService.instance.sendToPartner(
       relationshipId: pageState.widget.relationshipId,
-      title: '你們互相摸摸了 💞',
-      text: '摸摸回去了～',
+      title: '一切都會變好ㄉ',
+      text: '你的摸摸回來了~',
     );
   }
 
@@ -1020,6 +1034,80 @@ class _SwipeToReplyWrapperState extends State<SwipeToReplyWrapper>
         anim.addListener(() => setState(() => _dx = anim.value));
       },
       child: Transform.translate(offset: Offset(_dx, 0), child: widget.child),
+    );
+  }
+}
+
+class _BigDogEmojiOverlay extends StatefulWidget {
+  final VoidCallback onFinish;
+  const _BigDogEmojiOverlay({required this.onFinish});
+
+  @override
+  State<_BigDogEmojiOverlay> createState() => _BigDogEmojiOverlayState();
+}
+
+class _BigDogEmojiOverlayState extends State<_BigDogEmojiOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+  bool _removed = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.6, end: 1.1), weight: 40),
+      TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.9), weight: 40),
+    ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.linear));
+
+    _opacity = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 30),
+      TweenSequenceItem(tween: ConstantTween(1.0), weight: 40),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 30),
+    ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.linear));
+
+    _ctrl.addListener(() {
+      if (_ctrl.value >= 0.98 && !_removed) {
+        _removed = true;
+        widget.onFinish();
+      }
+    });
+
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Material(
+        color: Colors.transparent,
+        child: Center(
+          child: AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) => Opacity(
+              opacity: _opacity.value.clamp(0.0, 1.0),
+              child: Transform.scale(
+                scale: _scale.value.clamp(0.0, 3.0),
+                child: const Text('🐶', style: TextStyle(fontSize: 220)),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

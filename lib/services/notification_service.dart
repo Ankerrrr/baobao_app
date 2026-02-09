@@ -23,7 +23,18 @@ class NotificationService {
 
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidInit);
-    await _local.initialize(initSettings);
+    await _local.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (resp) {
+        final payload = resp.payload;
+        if (payload == null) return;
+
+        debugPrint('🔔 local notification tapped → $payload');
+
+        // payload = relationshipId
+        AppRuntimeState.pendingOpenRelationshipId = payload;
+      },
+    );
 
     const channel = AndroidNotificationChannel(
       'baby_channel',
@@ -49,30 +60,26 @@ class NotificationService {
 
   // ===== 前景通知 =====
   void _onForegroundMessage(RemoteMessage msg) {
-    // ⭐ 1. 先從 notification 讀（背景/前景通用）
     final notif = msg.notification;
     final title = notif?.title ?? '新訊息';
     final body = notif?.body;
-
-    // ⭐ 2. data 只拿來做邏輯判斷
     final relationshipId = msg.data['relationshipId'];
 
-    if (body == null || body.isEmpty) return;
+    if (body == null || relationshipId == null) return;
 
-    // ⭐ 3. 如果正在 MessagePage（同一聊天室）→ 不顯示
-    if (AppRuntimeState.currentChatRelationshipId != null &&
-        AppRuntimeState.currentChatRelationshipId == relationshipId) {
-      debugPrint('🔕 skip foreground notification (already in chat)');
+    // 已在聊天室 → 不顯示
+    if (AppRuntimeState.currentChatRelationshipId == relationshipId) {
       return;
     }
 
-    debugPrint('🔔 show foreground notification');
-
-    // ⭐ 4. 前景一定要自己顯示 local notification
-    showLocal(title: title, body: body);
+    showLocal(title: title, body: body, relationshipId: relationshipId);
   }
 
-  Future<void> showLocal({required String title, required String body}) async {
+  Future<void> showLocal({
+    required String title,
+    required String body,
+    required String relationshipId,
+  }) async {
     await _local.show(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title,
@@ -85,6 +92,7 @@ class NotificationService {
           priority: Priority.high,
         ),
       ),
+      payload: relationshipId, // ⭐⭐⭐ 關鍵
     );
   }
 

@@ -440,6 +440,50 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     });
   }
 
+  Future<bool> _confirmPetCost(BuildContext context) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('討摸摸需要飼料'),
+            content: const Text('討摸摸會消費 2 顆飼料 🍖🍖\n要繼續嗎？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('確認'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<bool> _consumeFoodForPet(String relationshipId) async {
+    final ref = FirebaseFirestore.instance
+        .collection('relationships')
+        .doc(relationshipId);
+
+    try {
+      return await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        final food = (snap.data()?['food'] as int?) ?? 0;
+
+        if (food < 2) {
+          return false;
+        }
+
+        tx.update(ref, {'food': FieldValue.increment(-2)});
+
+        return true;
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ===== Menu =====
 
   void _showMenu(BuildContext ctx) {
@@ -465,10 +509,26 @@ class _InteractiveBabyState extends State<InteractiveBaby>
             onTap: () async {
               _hideMenu();
 
-              final uid = FirebaseAuth.instance.currentUser!.uid;
               final rid = _relationshipId;
+              final uid = FirebaseAuth.instance.currentUser!.uid;
               if (rid == null) return;
 
+              // ① 確認是否要消費
+              final ok = await _confirmPetCost(context);
+              if (!ok) return;
+
+              // ② 嘗試扣飼料
+              final success = await _consumeFoodForPet(rid);
+              if (!success) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('🍖 飼料不足，無法討摸摸')));
+                return;
+              }
+              _say('我要摸摸!!!! ', duration: const Duration(seconds: 9));
+
+              // ③ 扣成功 → 發送 pet_request
               await FirebaseFirestore.instance
                   .collection('relationships')
                   .doc(rid)
@@ -480,11 +540,20 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                     'createdAt': FieldValue.serverTimestamp(),
                   });
 
+              // ④ 通知對方
               await NotificationService.instance.sendToPartner(
                 relationshipId: rid,
                 title: '十萬火急',
-                text: '你兄弟${myName}對你發出Pet Pet 請求, 快去回覆他吧',
+                text: '你兄弟$myName 對你發出 Pet Pet 請求 🐾',
               );
+
+              // ⑤ 成功回饋
+              if (mounted) {
+                HapticFeedback.heavyImpact();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('💖 已消費 2 顆飼料，討摸摸送出！')),
+                );
+              }
             },
           ),
         ],
@@ -518,7 +587,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                     child: Transform.rotate(angle: _spin.value, child: child),
                   ),
                   child: _BabyBody(
-                    mood: _mood,
+                    food: _serverFood,
                     love: _uiLove,
                     hearts: _hearts,
                     onHeartDone: _removeHeart,
@@ -659,7 +728,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                                     ),
                                   ),
                                   child: _BabyBody(
-                                    mood: _mood,
+                                    food: _serverFood,
                                     love: _uiLove,
                                     hearts: const [],
                                     onHeartDone: (_) {},
@@ -768,7 +837,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 // ===== UI Components =====
 
 class _BabyBody extends StatelessWidget {
-  final String mood;
+  final int food;
   final int love;
   final List<_FloatingHeart> hearts;
   final void Function(int id) onHeartDone;
@@ -777,7 +846,7 @@ class _BabyBody extends StatelessWidget {
   final List<_PartnerFloat> partnerFloats;
 
   const _BabyBody({
-    required this.mood,
+    required this.food,
     required this.love,
     required this.hearts,
     required this.onHeartDone,
@@ -849,7 +918,7 @@ class _BabyBody extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
-          child: Text('心情：$mood · 愛心：$love'),
+          child: Text('飼料：$food  · 愛心：$love'),
         ),
       ],
     );

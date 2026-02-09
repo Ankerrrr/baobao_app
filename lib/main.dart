@@ -8,6 +8,7 @@ import 'pages/login_page.dart';
 import 'pages/message_page.dart';
 import 'services/notification_service.dart';
 import 'services/deviceStatus_service.dart';
+import './app_runtime_state.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -23,18 +24,19 @@ void main() async {
   DeviceStatusService.instance.init();
 
   // ✅ 設定「點通知要跳去哪」
-  NotificationService.instance.setupNotificationTapHandler(
-    onOpenMessage: (relationshipId) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final rid = AppRuntimeState.pendingOpenRelationshipId;
+    if (rid != null) {
+      AppRuntimeState.pendingOpenRelationshipId = null;
+
       navigatorKey.currentState?.push(
         MaterialPageRoute(
-          builder: (_) => MessagePage(
-            key: messagePageStateKey, // ⭐⭐⭐
-            relationshipId: relationshipId,
-          ),
+          builder: (_) =>
+              MessagePage(key: messagePageStateKey, relationshipId: rid),
         ),
       );
-    },
-  );
+    }
+  });
 
   runApp(const MyApp());
 }
