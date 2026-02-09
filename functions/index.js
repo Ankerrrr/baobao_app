@@ -255,8 +255,8 @@ exports.sendDailyCountdownNotifications = onSchedule(
         targetAt.getDate(),
       );
 
-      const diffMs = targetDay - today;
-      const diffDays = Math.round(diffMs / 86400000);
+      const diffMs = targetDay.getTime() - Date.now();
+      const diffDays = Math.max(0, Math.floor(diffMs / 86400000));
 
       return Math.max(0, diffDays);
     }

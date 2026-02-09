@@ -45,21 +45,23 @@ class _SettingPageState extends State<SettingPage> {
   }) async {
     if (_relationshipId == null) return;
 
+    // 1. 建立基礎資料，確保通知開關一定會被更新
     final Map<String, dynamic> countdown = {
       'enabled': enabled,
-      'notifyEnabled': _countdownNotifyEnabled,
+      'notifyEnabled': _countdownNotifyEnabled, // 直接讀取目前的 state
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
     if (enabled && event != null) {
-      // ✅ 真正選好活動才存
-      countdown.addAll(event);
-    } else {
-      // ⭐ 啟用 or 關閉時，清掉舊 event
+      // 2. 選好活動時，合併活動資訊
+      countdown['eventId'] = event['eventId'];
+      countdown['eventTitle'] = event['eventTitle'];
+      countdown['targetAt'] = event['targetAt'];
+    } else if (!enabled) {
+      // 3. 關閉倒數時，移除活動欄位
       countdown.addAll({
         'eventId': FieldValue.delete(),
         'eventTitle': FieldValue.delete(),
-        'eventTime': FieldValue.delete(),
         'targetAt': FieldValue.delete(),
       });
     }
