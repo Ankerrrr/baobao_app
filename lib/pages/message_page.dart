@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/notification_service.dart';
 import '../app_runtime_state.dart';
+import 'dart:math' as Math;
 
 final GlobalKey<_MessagePageState> messagePageStateKey =
     GlobalKey<_MessagePageState>();
@@ -27,6 +28,21 @@ class _MessagePageState extends State<MessagePage> {
   String? _replyToMessageId;
   String? _replyToText;
   String? _replyToFromUid;
+
+  static const List<Map<String, String>> animalOptions = [
+    {'id': 'cat', 'label': '貓咪', 'emoji': '🐱'},
+    {'id': 'dog', 'label': '狗狗', 'emoji': '🐶'},
+    {'id': 'rabbit', 'label': '兔子', 'emoji': '🐰'},
+    {'id': 'bear', 'label': '小熊', 'emoji': '🐻'},
+    {'id': 'fox', 'label': '狐狸', 'emoji': '🦊'},
+    {'id': 'tiger', 'label': '老虎', 'emoji': '🐯'},
+    {'id': 'panda', 'label': '熊貓', 'emoji': '🐼'},
+    {'id': 'hamster', 'label': '倉鼠', 'emoji': '🐹'},
+    {'id': 'duck', 'label': '小鴨', 'emoji': '🦆'},
+    {'id': 'dinosaur', 'label': '恐龍', 'emoji': '🦖'},
+    {'id': 'mermaid', 'label': '美人魚', 'emoji': '🧜'},
+    {'id': 'santa', 'label': '聖誕老人', 'emoji': '🧑‍🎄'},
+  ];
 
   @override
   void initState() {
@@ -621,12 +637,47 @@ class _MessageBubbleState extends State<_MessageBubble>
     ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
   }
 
-  void showBigDogEmoji(BuildContext context) {
+  Future<void> showAnimalsOverlay(BuildContext context) async {
     final overlay = Overlay.of(context);
+
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
+    final pageState = context.findAncestorStateOfType<_MessagePageState>();
+    if (pageState == null) return;
+
+    final db = FirebaseFirestore.instance;
+
+    // ① 讀自己
+    final mySnap = await db.collection('users').doc(myUid).get();
+    final myAnimal = mySnap.data()?['relationship']?['animal'];
+
+    // ② 讀對方
+    final partnerUid = pageState._partnerUid;
+    String? partnerAnimal;
+
+    if (partnerUid != null) {
+      final partnerSnap = await db.collection('users').doc(partnerUid).get();
+      partnerAnimal = partnerSnap.data()?['relationship']?['animal'];
+    }
+
+    String getEmoji(String? id) {
+      final found = _MessagePageState.animalOptions.firstWhere(
+        (e) => e['id'] == id,
+        orElse: () => {'emoji': '🐶'},
+      );
+      return found['emoji']!;
+    }
+
+    final myEmoji = getEmoji(myAnimal);
+    final partnerEmoji = getEmoji(partnerAnimal);
+
     late OverlayEntry entry;
 
     entry = OverlayEntry(
-      builder: (_) => _BigDogEmojiOverlay(onFinish: () => entry.remove()),
+      builder: (_) => _TwoAnimalsOverlay(
+        topEmoji: myEmoji,
+        bottomEmoji: partnerEmoji,
+        onFinish: () => entry.remove(),
+      ),
     );
 
     overlay.insert(entry);
@@ -644,7 +695,7 @@ class _MessageBubbleState extends State<_MessageBubble>
 
   Widget _buildPetDoneUI(BuildContext context) {
     return GestureDetector(
-      onTap: () => showBigDogEmoji(context),
+      onTap: () => showAnimalsOverlay(context),
       child: Align(
         alignment: Alignment.center,
         child: Container(
@@ -788,6 +839,9 @@ class _MessageBubbleState extends State<_MessageBubble>
         .collection('messages')
         .doc(widget.messageId);
 
+    // ⭐⭐⭐ 先跳出狗狗 emoji
+    await showAnimalsOverlay(context);
+
     // ① 更新原本的 pet_request
     await msgRef.update({
       'status': 'accepted',
@@ -795,20 +849,7 @@ class _MessageBubbleState extends State<_MessageBubble>
       'acceptedAt': FieldValue.serverTimestamp(),
     });
 
-    // ② 新增一筆「摸回去」
-    // await msgRef.parent.add({
-    //   'type': 'pet_response',
-    //   'fromUid': myUid,
-    //   'text': '摸摸你 💞',
-    //   'replyTo': {
-    //     'messageId': widget.messageId,
-    //     'text': '討摸摸 ❤️',
-    //     'fromUid': widget.isMe ? myUid : FirebaseAuth.instance.currentUser!.uid,
-    //   },
-    //   'createdAt': FieldValue.serverTimestamp(),
-    // });
-
-    // ③ 發通知
+    // ② 發通知
     await NotificationService.instance.sendToPartner(
       relationshipId: pageState.widget.relationshipId,
       title: '一切都會變好ㄉ',
@@ -1109,5 +1150,175 @@ class _BigDogEmojiOverlayState extends State<_BigDogEmojiOverlay>
         ),
       ),
     );
+  }
+}
+
+class _TwoAnimalsOverlay extends StatefulWidget {
+  final String topEmoji;
+  final String bottomEmoji;
+  final VoidCallback onFinish;
+
+  const _TwoAnimalsOverlay({
+    required this.topEmoji,
+    required this.bottomEmoji,
+    required this.onFinish,
+  });
+
+  @override
+  State<_TwoAnimalsOverlay> createState() => _TwoAnimalsOverlayState();
+}
+
+class _TwoAnimalsOverlayState extends State<_TwoAnimalsOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+  bool _removed = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    _scale = Tween<double>(
+      begin: 0.7,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+
+    _fade = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+
+    _ctrl.forward();
+
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed && !_removed) {
+        _removed = true;
+        Future.delayed(const Duration(milliseconds: 300), widget.onFinish);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final double emojiSize = screenWidth * 0.5;
+
+    return IgnorePointer(
+      child: Material(
+        color: Colors.transparent,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // ❤️ 愛心粒子層
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) => CustomPaint(
+                painter: _HeartBurstPainter(progress: _ctrl.value),
+                size: Size.infinite,
+              ),
+            ),
+
+            // 🐾 動物層
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) => Opacity(
+                opacity: _fade.value,
+                child: Transform.scale(
+                  scale: _scale.value,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Transform.translate(
+                        offset: Offset(0, emojiSize),
+                        child: Text(
+                          widget.topEmoji,
+                          style: TextStyle(fontSize: emojiSize, height: 0.85),
+                        ),
+                      ),
+                      Transform.translate(
+                        offset: Offset(0, -emojiSize),
+                        child: Text(
+                          widget.bottomEmoji,
+                          style: TextStyle(fontSize: emojiSize, height: 0.85),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeartBurstPainter extends CustomPainter {
+  final double progress;
+  final int heartCount = 24; // ❤️ 增加數量
+
+  _HeartBurstPainter({required this.progress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+
+    // ⭐ 半徑改為依螢幕比例
+    final maxRadius = size.shortestSide * 1.2;
+
+    // ⭐ 曲線讓前段爆得快
+    final curved = Curves.easeOut.transform(progress);
+
+    for (int i = 0; i < heartCount; i++) {
+      final angle = (i / heartCount) * 2 * Math.pi;
+
+      final radius = maxRadius * curved;
+
+      final offset = Offset(
+        center.dx + radius * Math.cos(angle),
+        center.dy + radius * Math.sin(angle),
+      );
+
+      final opacity = (1 - progress).clamp(0.0, 1.0);
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '💗',
+          style: TextStyle(
+            fontSize: 44 * (1 - progress * 0.6), // ❤️ 愛心也放大
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+
+      textPainter.layout();
+
+      canvas.save();
+      canvas.translate(
+        offset.dx - textPainter.width / 2,
+        offset.dy - textPainter.height / 2,
+      );
+
+      textPainter.paint(canvas, Offset.zero);
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _HeartBurstPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }

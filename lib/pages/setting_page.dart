@@ -27,6 +27,23 @@ class _SettingPageState extends State<SettingPage> {
 
   final _nicknameCtrl = TextEditingController();
 
+  static const List<Map<String, String>> _animalOptions = [
+    {'id': 'cat', 'label': '貓咪', 'emoji': '🐱'},
+    {'id': 'dog', 'label': '狗狗', 'emoji': '🐶'},
+    {'id': 'rabbit', 'label': '兔子', 'emoji': '🐰'},
+    {'id': 'bear', 'label': '小熊', 'emoji': '🐻'},
+    {'id': 'fox', 'label': '狐狸', 'emoji': '🦊'},
+    {'id': 'tiger', 'label': '老虎', 'emoji': '🐯'},
+    {'id': 'panda', 'label': '熊貓', 'emoji': '🐼'},
+    {'id': 'hamster', 'label': '倉鼠', 'emoji': '🐹'},
+    {'id': 'duck', 'label': '小鴨', 'emoji': '🦆'},
+    {'id': 'dinosaur', 'label': '恐龍', 'emoji': '🦖'},
+    {'id': 'mermaid', 'label': '美人魚', 'emoji': '🧜'},
+    {'id': 'santa', 'label': '聖誕老人', 'emoji': '🧑‍🎄'},
+  ];
+
+  String? _animal;
+
   @override
   void initState() {
     super.initState();
@@ -76,6 +93,7 @@ class _SettingPageState extends State<SettingPage> {
     final data = snap.data();
 
     final rel = data?['relationship'];
+    final animal = (rel is Map) ? rel['animal'] as String? : null;
     final ts = (rel is Map) ? rel['startDate'] : null;
     final nick = (rel is Map) ? (rel['nickname'] as String?) : null;
 
@@ -103,6 +121,7 @@ class _SettingPageState extends State<SettingPage> {
       _startDate = ts is Timestamp ? ts.toDate() : null;
       _nickname = (nick ?? '').trim();
       _nicknameCtrl.text = _nickname;
+      _animal = animal;
       _loading = false;
     });
   }
@@ -110,6 +129,7 @@ class _SettingPageState extends State<SettingPage> {
   Future<void> _saveRelationship({
     DateTime? startDate,
     String? nickname,
+    String? animal,
   }) async {
     if (_saving) return;
     setState(() => _saving = true);
@@ -149,6 +169,17 @@ class _SettingPageState extends State<SettingPage> {
         },
       };
       batch.set(myRef, nickPayload, SetOptions(merge: true));
+    }
+
+    if (animal != null) {
+      final animalPayload = {
+        'relationship': {
+          'animal': animal,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      };
+
+      batch.set(myRef, animalPayload, SetOptions(merge: true));
     }
 
     await batch.commit();
@@ -361,6 +392,82 @@ class _SettingPageState extends State<SettingPage> {
                         )
                       : const Icon(Icons.chevron_right),
                   onTap: _saving ? null : _editNickname,
+                ),
+
+                // 🐾 代表性動物
+                ListTile(
+                  leading: const Icon(Icons.pets),
+                  title: const Text('代表性動物'),
+                  subtitle: Text(
+                    _animal == null
+                        ? '尚未設定'
+                        : (() {
+                            final found = _animalOptions.firstWhere(
+                              (a) => a['id'] == _animal,
+                              orElse: () => {'label': '未知', 'emoji': '❓'},
+                            );
+                            return '${found['emoji']} ${found['label']}';
+                          })(),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    final result = await showModalBottomSheet<String>(
+                      context: context,
+                      showDragHandle: true,
+                      builder: (_) {
+                        return GridView.builder(
+                          padding: const EdgeInsets.all(16),
+                          shrinkWrap: true,
+                          itemCount: _animalOptions.length,
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 1,
+                              ),
+                          itemBuilder: (context, index) {
+                            final animal = _animalOptions[index];
+                            final selected = _animal == animal['id'];
+
+                            return GestureDetector(
+                              onTap: () => Navigator.pop(context, animal['id']),
+                              child: Card(
+                                elevation: selected ? 4 : 1,
+                                color: selected ? Colors.pink.shade50 : null,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  side: selected
+                                      ? const BorderSide(
+                                          color: Colors.pink,
+                                          width: 2,
+                                        )
+                                      : BorderSide.none,
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      animal['emoji']!,
+                                      style: const TextStyle(fontSize: 30),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(animal['label']!),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    );
+
+                    if (result == null) return;
+
+                    await _saveRelationship(animal: result);
+
+                    setState(() {
+                      _animal = result;
+                    });
+                  },
                 ),
 
                 const Divider(),
