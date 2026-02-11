@@ -117,13 +117,15 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     final hour = DateTime.now().hour;
 
     if (hour >= 5 && hour < 11) {
-      return '早安～開心一整天';
-    } else if (hour >= 11 && hour < 17) {
-      return '午安～記得吃飯喔';
-    } else if (hour >= 17 && hour < 22) {
-      return '晚ㄤ～好好休息呦 ';
+      return '早安尼好～開心一整天';
+    } else if (hour >= 11 && hour < 14) {
+      return '午安尼好～記得吃飯喔';
+    } else if (hour >= 14 && hour < 18) {
+      return '下午啦尼好~想你了';
+    } else if (hour >= 18 && hour < 22) {
+      return '晚ㄤ尼好～好好休息呦 ';
     } else {
-      return '該睡覺ㄌ~';
+      return '尼好 該睡覺ㄌ~';
     }
   }
 
@@ -273,7 +275,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     _tapForFood++;
 
     if (_tapForFood % 50 == 0) {
-      _say('嘿嘿～');
+      _say('嘿嘿～', duration: const Duration(seconds: 5));
       _earnedFood++;
       _onGetFood();
     }
@@ -1384,10 +1386,91 @@ class _CountdownBannerState extends State<CountdownBanner>
   }
 }
 
-class _SpeechBubble extends StatelessWidget {
+class _SpeechBubble extends StatefulWidget {
   final String text;
 
   const _SpeechBubble({required this.text});
+
+  @override
+  State<_SpeechBubble> createState() => _SpeechBubbleState();
+}
+
+class _SpeechBubbleState extends State<_SpeechBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late Animation<double> _scale;
+  Timer? _loopTimer;
+
+  bool _firstJump = true;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    _setupAnimation(); // ⭐ 設定第一次動畫
+    _ctrl.forward(from: 0);
+
+    // ⭐ 每 2 秒跳一次（之後是小跳）
+    _loopTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted) return;
+
+      _firstJump = false; // ⭐ 後續都變小跳
+      _setupAnimation();
+      _ctrl.forward(from: 0);
+    });
+  }
+
+  void _setupAnimation() {
+    if (_firstJump) {
+      // 🎉 第一次大跳
+      _scale = TweenSequence<double>([
+        TweenSequenceItem(
+          tween: Tween(
+            begin: 0.7,
+            end: 1.2,
+          ).chain(CurveTween(curve: Curves.easeOutBack)),
+          weight: 60,
+        ),
+        TweenSequenceItem(
+          tween: Tween(
+            begin: 1.2,
+            end: 1.0,
+          ).chain(CurveTween(curve: Curves.easeIn)),
+          weight: 40,
+        ),
+      ]).animate(_ctrl);
+    } else {
+      // 💗 小跳
+      _scale = TweenSequence<double>([
+        TweenSequenceItem(
+          tween: Tween(
+            begin: 1.0,
+            end: 1.10,
+          ).chain(CurveTween(curve: Curves.easeOut)),
+          weight: 50,
+        ),
+        TweenSequenceItem(
+          tween: Tween(
+            begin: 1.10,
+            end: 1.0,
+          ).chain(CurveTween(curve: Curves.easeIn)),
+          weight: 50,
+        ),
+      ]).animate(_ctrl);
+    }
+  }
+
+  @override
+  void dispose() {
+    _loopTimer?.cancel();
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1396,33 +1479,45 @@ class _SpeechBubble extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 💬 泡泡本體
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black26,
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
+          ScaleTransition(
+            scale: _scale,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [
+                    Color.fromARGB(255, 255, 117, 186),
+                    Color.fromARGB(255, 230, 6, 126),
+                  ],
                 ),
-              ],
-            ),
-            child: Text(
-              text,
-              style: const TextStyle(
-                fontSize: 20,
-                color: Color.fromARGB(255, 155, 119, 0),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                widget.text,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),
 
-          // 🔽 箭頭（往上貼）
           Transform.translate(
-            offset: const Offset(0, -12), // ⭐ 關鍵：往上推
-            child: Icon(Icons.arrow_drop_down, size: 45, color: Colors.white),
+            offset: const Offset(0, -12),
+            child: const Icon(
+              Icons.arrow_drop_down,
+              size: 45,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
