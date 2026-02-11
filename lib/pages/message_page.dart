@@ -706,7 +706,7 @@ class _MessageBubbleState extends State<_MessageBubble>
             borderRadius: BorderRadius.circular(20),
           ),
           child: const Text(
-            '你們互相摸摸了 💞',
+            '你們互相摸摸了 ',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -801,7 +801,7 @@ class _MessageBubbleState extends State<_MessageBubble>
                     const SizedBox(width: 10),
                     Text(
                       isAccepted
-                          ? '你們互相摸摸了 💞'
+                          ? '你們互相摸摸了 '
                           : (widget.isMe ? '你發出了討摸摸' : '向你討摸摸'),
                       style: const TextStyle(
                         fontSize: 18,

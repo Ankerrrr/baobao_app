@@ -53,10 +53,13 @@ dependencies:
   flutter_launcher_icons: ^0.13.1
   battery_plus: ^5.0.3
 
-flutter_icons:
+flutter_launcher_icons:
   android: true
-  ios: true
   image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#8A8A8A" # 灰底
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
+  ios: true
+  image_path_ios: "assets/icon/app_icon.png"
 
 dev_dependencies:
   flutter_test:
