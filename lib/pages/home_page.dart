@@ -25,6 +25,21 @@ class _HomePageState extends State<HomePage> {
 
   bool _synced = false;
 
+  static const List<Map<String, String>> animalOptions = [
+    {'id': 'cat', 'label': '貓咪', 'emoji': '🐱'},
+    {'id': 'dog', 'label': '狗狗', 'emoji': '🐶'},
+    {'id': 'rabbit', 'label': '兔子', 'emoji': '🐰'},
+    {'id': 'bear', 'label': '小熊', 'emoji': '🐻'},
+    {'id': 'fox', 'label': '狐狸', 'emoji': '🦊'},
+    {'id': 'tiger', 'label': '老虎', 'emoji': '🐯'},
+    {'id': 'panda', 'label': '熊貓', 'emoji': '🐼'},
+    {'id': 'hamster', 'label': '倉鼠', 'emoji': '🐹'},
+    {'id': 'duck', 'label': '小鴨', 'emoji': '🦆'},
+    {'id': 'dinosaur', 'label': '恐龍', 'emoji': '🦖'},
+    {'id': 'mermaid', 'label': '美人魚', 'emoji': '🧜'},
+    {'id': 'santa', 'label': '聖誕老人', 'emoji': '🧑‍🎄'},
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +60,17 @@ class _HomePageState extends State<HomePage> {
     return FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
   }
 
+  String _getAnimalEmoji(String? animalId) {
+    if (animalId == null) return '';
+
+    final match = animalOptions.firstWhere(
+      (a) => a['id'] == animalId,
+      orElse: () => {},
+    );
+
+    return match['emoji'] ?? '';
+  }
+
   void _showDetailsSheet(
     BuildContext context, {
     required User authUser,
@@ -52,6 +78,7 @@ class _HomePageState extends State<HomePage> {
     required DateTime? startDate,
     required String myNickname,
     required String? relationshipId,
+    required String? myAnimalId,
   }) {
     showModalBottomSheet(
       context: context,
@@ -77,14 +104,11 @@ class _HomePageState extends State<HomePage> {
                 // ⭐ 自己（如果有 partnerUid，就從「對方 uid」讀 relationship.nickname，表示對方幫我取的名字）
                 if (partnerUid == null)
                   ListTile(
-                    leading: CircleAvatar(
-                      backgroundImage: authUser.photoURL != null
-                          ? NetworkImage(authUser.photoURL!)
-                          : null,
-                      child: authUser.photoURL == null
-                          ? const Icon(Icons.person)
-                          : null,
+                    leading: _AvatarWithAnimal(
+                      photoUrl: authUser.photoURL,
+                      emoji: _getAnimalEmoji(myAnimalId),
                     ),
+
                     title: Text(authUser.displayName ?? '我'),
                     subtitle: Text(authUser.email ?? ''),
                   )
@@ -104,6 +128,9 @@ class _HomePageState extends State<HomePage> {
                           : '';
 
                       final myDisplayName = (authUser.displayName ?? '').trim();
+
+                      final myEmoji = _getAnimalEmoji(myAnimalId);
+
                       final myTitle = myNickFromPartner.isNotEmpty
                           ? (myDisplayName.isNotEmpty
                                 ? '$myNickFromPartner（$myDisplayName）'
@@ -111,13 +138,9 @@ class _HomePageState extends State<HomePage> {
                           : (myDisplayName.isNotEmpty ? myDisplayName : '我');
 
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundImage: authUser.photoURL != null
-                              ? NetworkImage(authUser.photoURL!)
-                              : null,
-                          child: authUser.photoURL == null
-                              ? const Icon(Icons.person)
-                              : null,
+                        leading: _AvatarWithAnimal(
+                          photoUrl: authUser.photoURL,
+                          emoji: _getAnimalEmoji(myAnimalId),
                         ),
                         title: Text(myTitle),
                         subtitle: Text(authUser.email ?? ''),
@@ -140,7 +163,9 @@ class _HomePageState extends State<HomePage> {
                       final pEmail = (p?['email'] as String?) ?? '';
                       final pPhoto = (p?['photoURL'] as String?) ?? '';
 
-                      // 我幫對方取的暱稱：myNickname（從我的 doc 來）
+                      final partnerAnimalId =
+                          p?['relationship']?['animal'] as String?;
+                      final partnerEmoji = _getAnimalEmoji(partnerAnimalId);
                       final pTitle = myNickname.isNotEmpty
                           ? (displayName.isNotEmpty
                                 ? '$myNickname（$displayName）'
@@ -148,14 +173,11 @@ class _HomePageState extends State<HomePage> {
                           : (displayName.isNotEmpty ? displayName : '未命名');
 
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundImage: pPhoto.isNotEmpty
-                              ? NetworkImage(pPhoto)
-                              : null,
-                          child: pPhoto.isEmpty
-                              ? const Icon(Icons.person)
-                              : null,
+                        leading: _AvatarWithAnimal(
+                          photoUrl: pPhoto,
+                          emoji: partnerEmoji,
                         ),
+
                         title: Text(pTitle),
                         subtitle: Text(pEmail),
                       );
@@ -416,6 +438,7 @@ class _HomePageState extends State<HomePage> {
                       relationshipId: partnerUid == null
                           ? null
                           : ([authUser.uid, partnerUid]..sort()).join('_'),
+                      myAnimalId: myData?['relationship']?['animal'] as String?,
                     );
                   },
                   child: partnerUid == null
@@ -624,6 +647,53 @@ class _CoupleAvatar extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvatarWithAnimal extends StatelessWidget {
+  final String? photoUrl;
+  final String emoji;
+
+  const _AvatarWithAnimal({required this.photoUrl, required this.emoji});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 👤 原本頭貼
+          CircleAvatar(
+            radius: 22,
+            backgroundImage: (photoUrl != null && photoUrl!.isNotEmpty)
+                ? NetworkImage(photoUrl!)
+                : null,
+            child: (photoUrl == null || photoUrl!.isEmpty)
+                ? const Icon(Icons.person)
+                : null,
+          ),
+
+          // 🐱 左上角動物
+          if (emoji.isNotEmpty)
+            Positioned(
+              top: -0,
+              left: -12,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: const [
+                    BoxShadow(blurRadius: 4, color: Colors.black12),
+                  ],
+                ),
+                child: Text(emoji, style: const TextStyle(fontSize: 14)),
+              ),
+            ),
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/notification_service.dart';
 import '../app_runtime_state.dart';
+import 'dart:async';
 import 'dart:math' as Math;
 
 final GlobalKey<_MessagePageState> messagePageStateKey =
@@ -60,6 +61,14 @@ class _MessagePageState extends State<MessagePage> {
 
     setState(() {
       _partnerUid = snap.data()?['partnerUid'];
+    });
+  }
+
+  Future<void> _updateReadMessageCountWithTotal(int totalCount) async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      'read_message_count': totalCount,
     });
   }
 
@@ -382,6 +391,10 @@ class _MessagePageState extends State<MessagePage> {
                 final docs = snap.data!.docs;
                 final aliveIds = docs.map((e) => e.id).toSet();
                 _bubbleKeys.removeWhere((key, _) => !aliveIds.contains(key));
+                if (AppRuntimeState.currentChatRelationshipId ==
+                    widget.relationshipId) {
+                  _updateReadMessageCountWithTotal(docs.length);
+                }
                 if (docs.isEmpty) {
                   return const Center(child: Text('還沒有訊息 👀'));
                 }
@@ -433,9 +446,12 @@ class _MessagePageState extends State<MessagePage> {
                         isMe: isMe,
                         time: time,
                         sent: sent,
-                        type: type, // ⭐⭐⭐ 一定要有
+                        type: type,
                         petStatus: petStatus,
                         replyPreview: data['replyTo'],
+                        eventTitle: data['eventTitle'],
+                        remainText: data['remainText'],
+                        targetAt: data['targetAt'],
                       ),
                     );
                   },
@@ -481,6 +497,55 @@ class _MessagePageState extends State<MessagePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _sendCountdownMessage() async {
+    if (_sending) return;
+
+    final db = FirebaseFirestore.instance;
+    final relRef = db.collection('relationships').doc(widget.relationshipId);
+
+    final relSnap = await relRef.get();
+    final countdown = relSnap.data()?['countdown'];
+
+    if (countdown == null || countdown['enabled'] != true) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('尚未啟用倒數')));
+      return;
+    }
+
+    final targetTimestamp = countdown['targetAt'] as Timestamp?;
+    final eventTitle = countdown['eventTitle'] ?? '重要日子';
+
+    if (targetTimestamp == null) return;
+
+    final target = targetTimestamp.toDate();
+    final now = DateTime.now();
+    final diff = target.difference(now);
+
+    String remainText;
+
+    if (diff.isNegative) {
+      remainText = '已經到了 🎉';
+    } else {
+      final totalSeconds = diff.inSeconds;
+
+      final hours = totalSeconds ~/ 3600;
+      final minutes = (totalSeconds % 3600) ~/ 60;
+      final seconds = totalSeconds % 60;
+
+      remainText = '還有 $hours 小時 $minutes 分 $seconds 秒';
+    }
+
+    await relRef.collection('messages').add({
+      'type': 'countdown',
+      'text': '距離 $eventTitle 的倒數計時',
+      'eventTitle': eventTitle,
+      'targetAt': targetTimestamp,
+      'createdAt': FieldValue.serverTimestamp(),
+      'fromUid': FirebaseAuth.instance.currentUser!.uid,
+    });
   }
 
   void _showBatteryStale(
@@ -537,6 +602,35 @@ class _MessagePageState extends State<MessagePage> {
     return '${diff.inDays} 天前上線';
   }
 
+  Widget _buildMenuButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12, bottom: 6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 6),
+              Text(label),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputBar(BuildContext context) {
     return SafeArea(
       child: Container(
@@ -551,38 +645,69 @@ class _MessagePageState extends State<MessagePage> {
             ),
           ],
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _ctrl,
-                focusNode: _inputFocus,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _sendMessage(),
-                decoration: const InputDecoration(
-                  hintText: '輸入訊息…',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
+            // ⭐⭐⭐ 展開選單區
+            Row(
+              children: [
+                // ⭐ 左下角展開按鈕
+                PopupMenuButton<String>(
+                  icon: Icon(
+                    Icons.add_circle_outline,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+                  onSelected: (value) {
+                    if (value == 'countdown') {
+                      _sendCountdownMessage();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'countdown',
+                      child: Row(
+                        children: [
+                          Icon(Icons.timer, size: 20),
+                          SizedBox(width: 8),
+                          Text('發送倒數'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    focusNode: _inputFocus,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendMessage(),
+                    decoration: const InputDecoration(
+                      hintText: '輸入訊息…',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(16)),
+                      ),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: Icon(
-                Icons.send_rounded,
-                color: _sending
-                    ? Colors.grey
-                    : Theme.of(context).colorScheme.primary,
-              ),
-              onPressed: _sending ? null : _sendMessage,
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(
+                    Icons.send_rounded,
+                    color: _sending
+                        ? Colors.grey
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: _sending ? null : _sendMessage,
+                ),
+              ],
             ),
           ],
         ),
@@ -600,6 +725,9 @@ class _MessageBubble extends StatefulWidget {
   final String? type;
   final Map<String, dynamic>? replyPreview;
   final String? petStatus;
+  final String? eventTitle;
+  final String? remainText;
+  final Timestamp? targetAt;
 
   const _MessageBubble({
     required this.messageId,
@@ -607,9 +735,12 @@ class _MessageBubble extends StatefulWidget {
     required this.isMe,
     required this.time,
     required this.sent,
-    this.type, // ⭐ 新增
+    this.type,
     this.replyPreview,
     this.petStatus,
+    this.eventTitle,
+    this.remainText,
+    this.targetAt,
     super.key,
   });
 
@@ -621,10 +752,13 @@ class _MessageBubbleState extends State<_MessageBubble>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   late final Animation<double> _offset;
+  Timer? _timer;
+  String _remainText = '';
 
   @override
   void initState() {
     super.initState();
+
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
@@ -635,6 +769,57 @@ class _MessageBubbleState extends State<_MessageBubble>
       TweenSequenceItem(tween: Tween(begin: -6, end: 6), weight: 2),
       TweenSequenceItem(tween: Tween(begin: 6, end: 0), weight: 1),
     ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+
+    // ⭐⭐ 如果是 countdown 就啟動計時器
+    if (widget.type == 'countdown' && widget.targetAt != null) {
+      _startCountdown();
+    }
+  }
+
+  void _startCountdown() {
+    _updateRemainText();
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateRemainText();
+    });
+  }
+
+  void _updateRemainText() {
+    final target = widget.targetAt!.toDate();
+    final now = DateTime.now();
+    final diff = target.difference(now);
+
+    if (diff.isNegative) {
+      setState(() {
+        _remainText = '已經到了 🎉';
+      });
+      _timer?.cancel();
+      return;
+    }
+    final days = diff.inDays;
+    final hours = diff.inHours % 24;
+    final minutes = diff.inMinutes % 60;
+    final seconds = diff.inSeconds % 60;
+
+    List<String> parts = [];
+
+    if (days > 0) {
+      parts.add('$days 天');
+    }
+    if (hours > 0) {
+      parts.add('$hours 小時');
+    }
+    if (minutes > 0) {
+      parts.add('$minutes 分');
+    }
+    if (seconds > 0 || parts.isEmpty) {
+      // ⭐ 如果全部都是 0，至少顯示秒
+      parts.add('$seconds 秒');
+    }
+
+    setState(() {
+      _remainText = '還有 ${parts.join(' ')}';
+    });
   }
 
   Future<void> showAnimalsOverlay(BuildContext context) async {
@@ -689,6 +874,7 @@ class _MessageBubbleState extends State<_MessageBubble>
 
   @override
   void dispose() {
+    _timer?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -857,6 +1043,53 @@ class _MessageBubbleState extends State<_MessageBubble>
     );
   }
 
+  Widget _buildCountdownUI(BuildContext context) {
+    return Align(
+      alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: widget.isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.deepPurple.shade500, Colors.purple.shade300],
+                ),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '距離 ${widget.eventTitle ?? ''}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _remainText,
+                    style: const TextStyle(color: Colors.white70, fontSize: 15),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+
+            // ⭐⭐ 下方顯示傳送時間
+            Text(widget.time, style: Theme.of(context).textTheme.labelSmall),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Map<String, dynamic>? reply =
@@ -869,6 +1102,9 @@ class _MessageBubbleState extends State<_MessageBubble>
 
     if (widget.type == 'pet_request') {
       return _buildPetRequestUI(context);
+    }
+    if (widget.type == 'countdown') {
+      return _buildCountdownUI(context);
     }
 
     return AnimatedBuilder(
@@ -1213,7 +1449,7 @@ class _TwoAnimalsOverlayState extends State<_TwoAnimalsOverlay>
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final double emojiSize = screenWidth * 0.5;
+    final double emojiSize = screenWidth * 0.3;
 
     return IgnorePointer(
       child: Material(
@@ -1268,7 +1504,7 @@ class _TwoAnimalsOverlayState extends State<_TwoAnimalsOverlay>
 
 class _HeartBurstPainter extends CustomPainter {
   final double progress;
-  final int heartCount = 24; // ❤️ 增加數量
+  final int heartCount = 10; // ❤️ 增加數量
 
   _HeartBurstPainter({required this.progress});
 
