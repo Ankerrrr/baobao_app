@@ -10,6 +10,7 @@ import 'message_page.dart';
 import 'money_page.dart';
 import 'calendar_page.dart';
 import '../services/auth_service.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -348,7 +349,14 @@ class _HomePageState extends State<HomePage>
 
                           return GestureDetector(
                             onTap: () {
-                              _showFestivalDialog(context, title, content);
+                              showDialog(
+                                context: context,
+                                barrierDismissible: true,
+                                builder: (_) => _RingBoxDialog(
+                                  title: title,
+                                  content: content,
+                                ),
+                              );
                             },
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(999),
@@ -845,6 +853,240 @@ class _DotPainter extends CustomPainter {
         canvas.drawCircle(Offset(x + 4, y + 4), dotRadius, dotPaint);
       }
     }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _RingBoxDialog extends StatefulWidget {
+  final String title;
+  final String content;
+
+  const _RingBoxDialog({required this.title, required this.content});
+
+  @override
+  State<_RingBoxDialog> createState() => _RingBoxDialogState();
+}
+
+class _RingBoxDialogState extends State<_RingBoxDialog>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _openAnim;
+  late Animation<double> _textAnim;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+
+    _openAnim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+
+    _textAnim = CurvedAnimation(
+      parent: _ctrl,
+      curve: const Interval(0.4, 1.0, curve: Curves.easeOut),
+    );
+
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  final double boxHeight = 380;
+  final double boxMarginBottom = 60;
+  final double lidHeight = 200;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: SizedBox(
+        height: boxHeight + boxMarginBottom + 80, // ⭐ 重點
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (context, _) {
+            return Stack(
+              alignment: Alignment.bottomCenter,
+              clipBehavior: Clip.none, // ⭐ 允許超出
+              children: [
+                // 📦 盒子底
+                Container(
+                  width: 240,
+                  height: boxHeight,
+                  margin: EdgeInsets.only(bottom: boxMarginBottom),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B0000),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 230,
+                      height: 350,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1B1B2F), // 深藍絨布
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 20,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+
+                      child: FadeTransition(
+                        opacity: _textAnim,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+
+                            children: [
+                              Text(
+                                textAlign: TextAlign.center,
+                                softWrap: true,
+                                "❤️",
+                                style: TextStyle(fontSize: 40),
+                              ),
+                              Text(
+                                widget.title,
+                                textAlign: TextAlign.center,
+
+                                style: GoogleFonts.notoSerifTc(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.pinkAccent,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                widget.content,
+                                textAlign: TextAlign.left,
+                                style: GoogleFonts.notoSerifTc(
+                                  fontSize: 18,
+                                  height: 1.5,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 🟥 蓋子
+                Positioned(
+                  bottom: boxMarginBottom + boxHeight - 200,
+                  child: Transform(
+                    alignment: Alignment.topCenter,
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, 0.004)
+                      ..rotateX(-_openAnim.value * 2),
+                    child: ClipPath(
+                      clipper: _LidClipper(_openAnim.value),
+                      child: Container(
+                        width: 240,
+                        height: lidHeight,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(0xFFB71C1C), Color(0xFF8B0000)],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(18),
+                            topRight: Radius.circular(18),
+                          ),
+                        ),
+                        child: CustomPaint(painter: _HeartPatternPainter()),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _LidClipper extends CustomClipper<Path> {
+  final double progress;
+
+  _LidClipper(this.progress);
+
+  @override
+  Path getClip(Size size) {
+    final shrink = size.width * 0.25 * progress;
+    // 0.15 控制收多少
+
+    return Path()
+      ..moveTo(0, 0) // 上左（轉軸不動）
+      ..lineTo(size.width, 0) // 上右（轉軸不動）
+      ..lineTo(size.width - shrink, size.height) // 右下往內收
+      ..lineTo(shrink, size.height) // 左下往內收
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant _LidClipper oldClipper) =>
+      oldClipper.progress != progress;
+}
+
+class _HeartPatternPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color.fromARGB(139, 235, 114, 114)
+      ..style = PaintingStyle.fill;
+
+    const spacing = 40.0;
+    const heartSize = 8.0;
+
+    for (double x = 20; x < size.width; x += spacing) {
+      for (double y = 20; y < size.height; y += spacing) {
+        _drawHeart(canvas, Offset(x, y), heartSize, paint);
+      }
+    }
+  }
+
+  void _drawHeart(Canvas canvas, Offset center, double size, Paint paint) {
+    final path = Path();
+    path.moveTo(center.dx, center.dy + size / 2);
+
+    path.cubicTo(
+      center.dx - size,
+      center.dy - size / 3,
+      center.dx - size * 1.2,
+      center.dy + size / 2,
+      center.dx,
+      center.dy + size,
+    );
+
+    path.cubicTo(
+      center.dx + size * 1.2,
+      center.dy + size / 2,
+      center.dx + size,
+      center.dy - size / 3,
+      center.dx,
+      center.dy + size / 2,
+    );
+
+    canvas.drawPath(path, paint);
   }
 
   @override

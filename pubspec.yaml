@@ -53,6 +53,8 @@ dependencies:
   flutter_launcher_icons: ^0.13.1
   battery_plus: ^5.0.3
 
+  google_fonts: ^6.1.0
+
 flutter_launcher_icons:
   android: true
   image_path: "assets/icon/app_icon.png"
