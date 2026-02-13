@@ -385,16 +385,7 @@ class _HomePageState extends State<HomePage>
 
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              title,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ],
+                                          children: [_SeesawText(text: title)],
                                         ),
                                       ),
                                     ],
@@ -881,7 +872,7 @@ class _RingBoxDialogState extends State<_RingBoxDialog>
 
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 3000),
     );
 
     _openAnim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
@@ -1091,4 +1082,62 @@ class _HeartPatternPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _SeesawText extends StatefulWidget {
+  final String text;
+
+  const _SeesawText({required this.text});
+
+  @override
+  State<_SeesawText> createState() => _SeesawTextState();
+}
+
+class _SeesawTextState extends State<_SeesawText>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _angle;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _angle = Tween<double>(
+      begin: -0.02, // 左傾
+      end: 0.02, // 右傾
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _angle,
+      builder: (context, child) {
+        return Transform.rotate(
+          angle: _angle.value,
+          alignment: Alignment.center,
+          child: child,
+        );
+      },
+      child: Text(
+        widget.text,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
 }
