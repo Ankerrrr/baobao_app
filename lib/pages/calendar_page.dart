@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'dart:async';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -14,6 +15,7 @@ class CalendarPage extends StatefulWidget {
 class _CalendarPageState extends State<CalendarPage> {
   final _db = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance;
+
   Stream<List<_Event>>? _eventStream;
   final Set<String> _eventDays = {};
   final Map<String, String> _nicknameMap = {};
@@ -25,11 +27,15 @@ class _CalendarPageState extends State<CalendarPage> {
   late Future<String?> _relationshipFuture;
   DateTime? _loadedMonth;
 
+  final Map<String, Set<String>> _eventCreators = {};
+  String? _myAnimal;
+  String? _partnerAnimal;
+  StreamSubscription? _monthSub;
+
   @override
   void initState() {
     super.initState();
     _relationshipFuture = _getRelationshipId();
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadNicknames();
     });
@@ -65,13 +71,22 @@ class _CalendarPageState extends State<CalendarPage> {
     final partnerUid = myData['partnerUid'] as String?;
     final myRel = myData['relationship'] as Map<String, dynamic>?;
 
+    final myAnimal = myRel?['animal'] as String?;
+    _myAnimal = myAnimal;
+
+    if (partnerUid != null) {
+      final partnerDoc = await _db.collection('users').doc(partnerUid).get();
+      final partnerAnimal =
+          partnerDoc.data()?['relationship']?['animal'] as String?;
+      _partnerAnimal = partnerAnimal;
+    }
+
     // ⭐ 自己：固定顯示「我」
     _nicknameMap[myUid] = '自己';
 
     // ⭐ 對方：從「我自己的 relationship.nickname」拿
     if (partnerUid != null) {
       final partnerNickname = (myRel?['nickname'] as String?)?.trim();
-
       _nicknameMap[partnerUid] = partnerNickname?.isNotEmpty == true
           ? partnerNickname!
           : '對方';
@@ -103,19 +118,16 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Stream<List<_Event>> _eventsStream(String relationshipId, DateTime day) {
     final dateStr = DateFormat('yyyy-MM-dd').format(day);
-
     return _db
         .collection('relationships')
         .doc(relationshipId)
         .collection('events')
-        .where('date', isEqualTo: dateStr)
-        // ❌ 不要 orderBy
+        .where('date', isEqualTo: dateStr) // ❌ 不要 orderBy
         .snapshots()
         .map((snap) {
           return snap.docs.map((d) {
             final data = d.data();
             final ts = data['time'] as Timestamp?;
-
             return _Event(
               id: d.id,
               title: data['title'],
@@ -163,19 +175,38 @@ class _CalendarPageState extends State<CalendarPage> {
     final startStr = DateFormat('yyyy-MM-dd').format(start);
     final endStr = DateFormat('yyyy-MM-dd').format(end);
 
-    final snap = await _db
+    // ⭐ 先取消舊監聽
+    await _monthSub?.cancel();
+
+    _monthSub = _db
         .collection('relationships')
         .doc(relationshipId)
         .collection('events')
         .where('date', isGreaterThanOrEqualTo: startStr)
         .where('date', isLessThanOrEqualTo: endStr)
-        .get();
+        .snapshots()
+        .listen((snap) {
+          _eventDays.clear();
+          _eventCreators.clear();
 
-    _eventDays
-      ..clear()
-      ..addAll(snap.docs.map((d) => d['date'] as String));
+          for (var d in snap.docs) {
+            final date = d['date'] as String;
+            final createdBy = d['createdBy'] as String;
 
-    setState(() {}); // ⭐ 讓月曆重畫
+            _eventDays.add(date);
+
+            _eventCreators.putIfAbsent(date, () => {});
+            _eventCreators[date]!.add(createdBy);
+          }
+
+          setState(() {});
+        });
+  }
+
+  @override
+  void dispose() {
+    _monthSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -186,7 +217,6 @@ class _CalendarPageState extends State<CalendarPage> {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
         final relationshipId = snap.data;
         if (relationshipId == null) {
           return const Center(child: Text('尚未綁定對象'));
@@ -218,14 +248,11 @@ class _CalendarPageState extends State<CalendarPage> {
                 lastDay: DateTime(2030),
                 focusedDay: _focusedDay,
                 selectedDayPredicate: (day) => isSameDay(day, _selectedDay),
-
                 headerStyle: const HeaderStyle(formatButtonVisible: false),
-
                 eventLoader: (day) {
                   final key = DateFormat('yyyy-MM-dd').format(day);
                   return _eventDays.contains(key) ? [1] : [];
                 },
-
                 onDaySelected: (selected, focused) {
                   setState(() {
                     _selectedDay = selected;
@@ -233,49 +260,70 @@ class _CalendarPageState extends State<CalendarPage> {
                     _eventStream = _eventsStream(relationshipId, selected);
                   });
                 },
-
                 onPageChanged: (focusedDay) {
                   _focusedDay = focusedDay;
                   _loadMonthEventDays(relationshipId, focusedDay);
                 },
-
                 calendarBuilders: CalendarBuilders(
                   markerBuilder: (context, day, events) {
-                    if (events.isEmpty) return null;
+                    final key = DateFormat('yyyy-MM-dd').format(day);
+                    if (!_eventCreators.containsKey(key)) return null;
+
+                    final creators = _eventCreators[key]!;
+                    List<String> emojis = [];
+
+                    if (creators.contains(myUid) && _myAnimal != null) {
+                      emojis.add(_getAnimalEmoji(_myAnimal));
+                    }
+                    if (_partnerAnimal != null) {
+                      for (var uid in creators) {
+                        if (uid != myUid) {
+                          emojis.add(_getAnimalEmoji(_partnerAnimal));
+                        }
+                      }
+                    }
+
+                    if (emojis.isEmpty) return null;
 
                     return Positioned(
-                      bottom: 12, // ⭐ 點點高度（你已經在用這個概念）
-                      child: Container(
-                        width: 4, // ⭐ 點點大小（改這裡）
-                        height: 4, // ⭐ 點點大小（改這裡）
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
+                      bottom: 0,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: emojis.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final e = entry.value;
+
+                          return Transform.translate(
+                            offset: Offset(
+                              index == 0 ? 0 : -3,
+                              0,
+                            ), // ⭐ 第二個往左推 3px
+                            child: Text(
+                              e,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          );
+                        }).toList(),
                       ),
                     );
                   },
                 ),
-
                 calendarStyle: CalendarStyle(
                   // 📅 平日（乾淨白）
                   defaultTextStyle: const TextStyle(
                     color: Color(0xFFEAEAEA), // 柔白，不死白
                     fontWeight: FontWeight.w500,
                   ),
-
                   // 🟠 週六 / 週日（溫暖橘粉，不刺眼）
                   weekendTextStyle: const TextStyle(
                     color: Color(0xFFFF9F6E), // 奶橘色
                     fontWeight: FontWeight.w600,
                   ),
-
                   // 🔵 今天（藍色焦點）
                   todayDecoration: const BoxDecoration(
                     color: Color(0xFF4DA3FF), // 柔藍
                     shape: BoxShape.circle,
                   ),
-
                   // 🟠 選取日期（橘色呼應週末）
                   selectedDecoration: const BoxDecoration(
                     color: Color(0xFFFF8A3D), // 活潑橘
@@ -283,9 +331,7 @@ class _CalendarPageState extends State<CalendarPage> {
                   ),
                 ),
               ),
-
               const Divider(),
-
               Expanded(
                 child: StreamBuilder<List<_Event>>(
                   stream: _eventStream,
@@ -293,9 +339,7 @@ class _CalendarPageState extends State<CalendarPage> {
                     if (eventSnap.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
                     }
-
                     final List<_Event> events = eventSnap.data ?? <_Event>[];
-
                     if (events.isEmpty) {
                       return const Center(child: Text('當日沒有活動'));
                     }
@@ -304,17 +348,14 @@ class _CalendarPageState extends State<CalendarPage> {
                       physics: const BouncingScrollPhysics(),
                       padding: const EdgeInsets.only(bottom: 120),
                       itemCount: events.length,
-
                       // ⭐ 每筆下面的框線
                       separatorBuilder: (_, __) => const Divider(
                         height: 1,
                         thickness: 0.6,
                         color: Color(0xFF2C2C2C), // 深色柔和線
                       ),
-
                       itemBuilder: (context, i) {
                         final e = events[i];
-
                         return Dismissible(
                           key: ValueKey(e.id), // ⭐ 一定要唯一
                           direction: DismissDirection.endToStart,
@@ -349,7 +390,6 @@ class _CalendarPageState extends State<CalendarPage> {
                           onDismissed: (direction) {
                             _deleteEvent(relationshipId, e);
                           },
-
                           child: InkWell(
                             onTap: () => _editEvent(relationshipId, e),
                             child: ListTile(
@@ -405,7 +445,6 @@ class _CalendarPageState extends State<CalendarPage> {
 
 class _AddEventDialog extends StatefulWidget {
   final DateTime selectedDay; // ⭐ 新增
-
   const _AddEventDialog({required this.selectedDay});
 
   @override
@@ -463,7 +502,6 @@ class _AddEventDialogState extends State<_AddEventDialog> {
         ElevatedButton(
           onPressed: () {
             if (_titleCtrl.text.trim().isEmpty) return;
-
             DateTime? fullTime;
             if (_selectedTime != null) {
               fullTime = DateTime(
@@ -474,7 +512,6 @@ class _AddEventDialogState extends State<_AddEventDialog> {
                 _selectedTime!.minute,
               );
             }
-
             Navigator.pop(
               context,
               _EventDraft(
@@ -484,7 +521,6 @@ class _AddEventDialogState extends State<_AddEventDialog> {
               ),
             );
           },
-
           child: const Text('新增'),
         ),
       ],
@@ -495,6 +531,7 @@ class _AddEventDialogState extends State<_AddEventDialog> {
   void dispose() {
     _titleCtrl.dispose();
     _detailCtrl.dispose();
+
     super.dispose();
   }
 }
@@ -526,7 +563,6 @@ class _EventDraft {
 class _EditEventDialog extends StatefulWidget {
   final _Event event;
   final DateTime selectedDay;
-
   const _EditEventDialog({required this.event, required this.selectedDay});
 
   @override
@@ -543,7 +579,6 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     super.initState();
     _titleCtrl = TextEditingController(text: widget.event.title);
     _detailCtrl = TextEditingController(text: widget.event.detail);
-
     if (widget.event.time != null) {
       _selectedTime = TimeOfDay.fromDateTime(widget.event.time!);
     }
@@ -605,7 +640,6 @@ class _EditEventDialogState extends State<_EditEventDialog> {
         ElevatedButton(
           onPressed: () {
             if (_titleCtrl.text.trim().isEmpty) return;
-
             DateTime? fullTime;
             if (_selectedTime != null) {
               fullTime = DateTime(
@@ -616,7 +650,6 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                 _selectedTime!.minute,
               );
             }
-
             Navigator.pop(
               context,
               _EventDraft(
@@ -638,4 +671,26 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     _detailCtrl.dispose();
     super.dispose();
   }
+}
+
+String _getAnimalEmoji(String? id) {
+  const animalOptions = [
+    {'id': 'cat', 'emoji': '🐱'},
+    {'id': 'dog', 'emoji': '🐶'},
+    {'id': 'rabbit', 'emoji': '🐰'},
+    {'id': 'bear', 'emoji': '🐻'},
+    {'id': 'fox', 'emoji': '🦊'},
+    {'id': 'tiger', 'emoji': '🐯'},
+    {'id': 'panda', 'emoji': '🐼'},
+    {'id': 'hamster', 'emoji': '🐹'},
+    {'id': 'duck', 'emoji': '🦆'},
+    {'id': 'dinosaur', 'emoji': '🦖'},
+    {'id': 'mermaid', 'emoji': '🧜'},
+    {'id': 'santa', 'emoji': '🧑‍🎄'},
+  ];
+  final found = animalOptions.firstWhere(
+    (e) => e['id'] == id,
+    orElse: () => {'emoji': '🐶'},
+  );
+  return found['emoji']!;
 }

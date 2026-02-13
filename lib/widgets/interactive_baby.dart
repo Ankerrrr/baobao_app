@@ -85,6 +85,10 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   bool _unreadInitialized = false;
   bool _isUnreadSpeech = false;
 
+  Timer? _messagePollTimer;
+
+  int _currentReadCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +121,53 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     });
   }
 
+  void _handleUnread(int unread) {
+    if (!_unreadInitialized) {
+      _unreadInitialized = true;
+      _lastUnreadNotified = unread;
+      return;
+    }
+
+    if (unread > 0 && unread != _lastUnreadNotified) {
+      _lastUnreadNotified = unread;
+
+      if (unread == 1) {
+        _say(
+          '訊息來了!!!',
+          duration: const Duration(seconds: 10),
+          fromUnread: true,
+        );
+      } else if (unread < 5) {
+        _say(
+          '你有 $unread 則未讀訊息',
+          duration: const Duration(seconds: 10),
+          fromUnread: true,
+        );
+      } else {
+        _say(
+          '爆炸🤯！$unread 則未讀',
+          duration: const Duration(seconds: 10),
+          fromUnread: true,
+        );
+      }
+    }
+
+    if (unread == 0 && _speechText != null && _isUnreadSpeech) {
+      setState(() {
+        _speechVisible = false;
+      });
+
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted) return;
+        setState(() {
+          _speechText = null;
+        });
+      });
+
+      _lastUnreadNotified = 0;
+    }
+  }
+
   String _timeGreeting() {
     final hour = DateTime.now().hour;
 
@@ -131,6 +182,27 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     } else {
       return '尼好 該睡覺ㄌ~';
     }
+  }
+
+  void _startMessagePolling(String relationshipId, String uid) {
+    _messagePollTimer?.cancel();
+
+    _messagePollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      final snap = await FirebaseFirestore.instance
+          .collection('relationships')
+          .doc(relationshipId)
+          .collection('messages')
+          .count()
+          .get();
+
+      final totalMessages = snap.count ?? 0;
+
+      final readCount = _currentReadCount ?? 0; // ⭐ 加這行
+
+      final unread = totalMessages - readCount;
+
+      _handleUnread(unread.clamp(0, 999999)); // ⭐ 保證 int 且不負數
+    });
   }
 
   void _queueSelfFloat(int delta) {
@@ -263,6 +335,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
     _jumpCtrl.dispose();
     _spinCtrl.dispose();
+    _messagePollTimer?.cancel();
     _hideMenu();
     super.dispose();
   }
@@ -632,6 +705,8 @@ class _InteractiveBabyState extends State<InteractiveBaby>
         final userData = userSnap.data?.data();
         final partnerUid = userData?['partnerUid'] as String?;
 
+        _currentReadCount = (userData?['read_message_count'] as int?) ?? 0;
+
         if (partnerUid == null) {
           return _buildBabyOnly();
         }
@@ -649,6 +724,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
         if (_relationshipId != relationshipId) {
           _relationshipId = relationshipId;
+          _startMessagePolling(relationshipId, uid);
         }
 
         return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -687,174 +763,95 @@ class _InteractiveBabyState extends State<InteractiveBaby>
               }
             }
 
-            /// ⭐⭐⭐ 監聽 messages ⭐⭐⭐
-            return StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('relationships')
-                  .doc(relationshipId)
-                  .collection('messages')
-                  .snapshots(),
-              builder: (context, msgSnap) {
-                final totalMessages = msgSnap.data?.docs.length ?? 0;
-                final readCount =
-                    (userData?['read_message_count'] as int?) ?? 0;
-
-                final unread = totalMessages - readCount;
-
-                // 初始化
-                if (!_unreadInitialized) {
-                  _unreadInitialized = true;
-                  _lastUnreadNotified = unread;
-                } else {
-                  // ============================
-                  // ① 有未讀 → 顯示提醒
-                  // ============================
-                  if (unread > 0 && unread != _lastUnreadNotified) {
-                    _lastUnreadNotified = unread;
-
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-
-                      if (unread == 1) {
-                        _say(
-                          '訊息來了!!!',
-                          duration: const Duration(seconds: 10),
-                          fromUnread: true,
-                        );
-                      } else if (unread < 5) {
-                        _say(
-                          '你有 $unread 則未讀訊息',
-                          duration: const Duration(seconds: 10),
-                          fromUnread: true,
-                        );
-                      } else {
-                        _say(
-                          '要爆炸了！$unread 則未讀 😳',
-                          duration: const Duration(seconds: 10),
-                          fromUnread: true,
-                        );
-                      }
-                    });
-                  }
-
-                  // ============================
-                  // ② 未讀歸零 → 只關閉未讀泡泡
-                  // ============================
-                  if (unread == 0 && _speechText != null && _isUnreadSpeech) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-
-                      setState(() {
-                        _speechVisible = false;
-                      });
-
-                      Future.delayed(const Duration(milliseconds: 400), () {
-                        if (!mounted) return;
-                        setState(() {
-                          _speechText = null;
-                        });
-                      });
-                    });
-
-                    _lastUnreadNotified = 0;
-                  }
-                }
-
-                /// ⭐ 原本 UI ⭐
-                return SizedBox.expand(
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      // ① Baby
-                      Positioned.fill(
-                        child: Column(
-                          children: [
-                            const SizedBox(height: 120),
-                            Expanded(
-                              child: Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(top: 40),
-                                  child: GestureDetector(
-                                    onTap: _onTap,
-                                    onLongPress: () => _showMenu(context),
-                                    child: AnimatedBuilder(
-                                      animation: Listenable.merge([
-                                        _jump,
-                                        _spin,
-                                      ]),
-                                      builder: (_, child) =>
-                                          Transform.translate(
-                                            offset: Offset(0, _jump.value),
-                                            child: Transform.rotate(
-                                              angle: _spin.value,
-                                              child: child,
-                                            ),
-                                          ),
-                                      child: _BabyBody(
-                                        food: _serverFood,
-                                        love: _uiLove,
-                                        hearts: const [],
-                                        onHeartDone: (_) {},
-                                        speechText: _speechText,
-                                        speechVisible: _speechVisible,
-                                        partnerFloats: const [],
-                                        onPartnerFloatDone: (_) {},
-                                      ),
+            /// ⭐ 原本 UI ⭐
+            return SizedBox.expand(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // ① Baby
+                  Positioned.fill(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 120),
+                        Expanded(
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 40),
+                              child: GestureDetector(
+                                onTap: _onTap,
+                                onLongPress: () => _showMenu(context),
+                                child: AnimatedBuilder(
+                                  animation: Listenable.merge([_jump, _spin]),
+                                  builder: (_, child) => Transform.translate(
+                                    offset: Offset(0, _jump.value),
+                                    child: Transform.rotate(
+                                      angle: _spin.value,
+                                      child: child,
                                     ),
+                                  ),
+                                  child: _BabyBody(
+                                    food: _serverFood,
+                                    love: _uiLove,
+                                    hearts: const [],
+                                    onHeartDone: (_) {},
+                                    speechText: _speechText,
+                                    speechVisible: _speechVisible,
+                                    partnerFloats: const [],
+                                    onPartnerFloatDone: (_) {},
                                   ),
                                 ),
                               ),
                             ),
-                          ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ② Countdown
+                  Positioned(
+                    top: 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: UnconstrainedBox(
+                        child: SizedBox(
+                          height: 140,
+                          child: Center(child: countdown),
                         ),
                       ),
+                    ),
+                  ),
 
-                      // ② Countdown
-                      Positioned(
-                        top: 8,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: UnconstrainedBox(
-                            child: SizedBox(
-                              height: 140,
-                              child: Center(child: countdown),
+                  // ③ 愛心 / float
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          ..._hearts.map(
+                            (h) => _HeartFly(
+                              key: ValueKey(h.id),
+                              startDx: h.dx,
+                              fromPartner: h.fromPartner,
+                              onDone: () => _removeHeart(h.id),
                             ),
                           ),
-                        ),
-                      ),
-
-                      // ③ 愛心 / float
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              ..._hearts.map(
-                                (h) => _HeartFly(
-                                  key: ValueKey(h.id),
-                                  startDx: h.dx,
-                                  fromPartner: h.fromPartner,
-                                  onDone: () => _removeHeart(h.id),
-                                ),
-                              ),
-                              ..._partnerFloats.map(
-                                (p) => _UserFloat(
-                                  key: ValueKey('pf_${p.id}'),
-                                  delta: p.delta,
-                                  startDx: p.dx,
-                                  photoUrl: p.photoUrl,
-                                  onDone: () => _removePartnerFloat(p.id),
-                                ),
-                              ),
-                            ],
+                          ..._partnerFloats.map(
+                            (p) => _UserFloat(
+                              key: ValueKey('pf_${p.id}'),
+                              delta: p.delta,
+                              startDx: p.dx,
+                              photoUrl: p.photoUrl,
+                              onDone: () => _removePartnerFloat(p.id),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                );
-              },
+                ],
+              ),
             );
           },
         );

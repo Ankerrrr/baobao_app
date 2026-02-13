@@ -28,8 +28,8 @@ class _SettingPageState extends State<SettingPage> {
   final _nicknameCtrl = TextEditingController();
 
   static const List<Map<String, String>> _animalOptions = [
-    {'id': 'cat', 'label': '貓咪', 'emoji': '🐱'},
-    {'id': 'dog', 'label': '狗狗', 'emoji': '🐶'},
+    {'id': 'cat', 'label': '卯咪', 'emoji': '🐱'},
+    {'id': 'dog', 'label': '狗勾', 'emoji': '🐶'},
     {'id': 'rabbit', 'label': '兔子', 'emoji': '🐰'},
     {'id': 'bear', 'label': '小熊', 'emoji': '🐻'},
     {'id': 'fox', 'label': '狐狸', 'emoji': '🦊'},
@@ -397,7 +397,7 @@ class _SettingPageState extends State<SettingPage> {
                 // 🐾 代表性動物
                 ListTile(
                   leading: const Icon(Icons.pets),
-                  title: const Text('代表性動物'),
+                  title: const Text('你的代表動物'),
                   subtitle: Text(
                     _animal == null
                         ? '尚未設定'
@@ -432,7 +432,14 @@ class _SettingPageState extends State<SettingPage> {
                               onTap: () => Navigator.pop(context, animal['id']),
                               child: Card(
                                 elevation: selected ? 4 : 1,
-                                color: selected ? Colors.pink.shade50 : null,
+                                color: selected
+                                    ? Theme.of(
+                                        context,
+                                      ).colorScheme.primaryContainer
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceVariant,
+
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),
                                   side: selected

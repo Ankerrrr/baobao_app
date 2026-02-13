@@ -5,6 +5,7 @@ import '../services/notification_service.dart';
 import '../app_runtime_state.dart';
 import 'dart:async';
 import 'dart:math' as Math;
+import 'package:flutter/services.dart';
 
 final GlobalKey<_MessagePageState> messagePageStateKey =
     GlobalKey<_MessagePageState>();
@@ -373,128 +374,137 @@ class _MessagePageState extends State<MessagePage> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('relationships')
-                  .doc(widget.relationshipId)
-                  .collection('messages')
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
-              builder: (context, snap) {
-                if (!snap.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
 
-                final docs = snap.data!.docs;
-                final aliveIds = docs.map((e) => e.id).toSet();
-                _bubbleKeys.removeWhere((key, _) => !aliveIds.contains(key));
-                if (AppRuntimeState.currentChatRelationshipId ==
-                    widget.relationshipId) {
-                  _updateReadMessageCountWithTotal(docs.length);
-                }
-                if (docs.isEmpty) {
-                  return const Center(child: Text('還沒有訊息 👀'));
-                }
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          FocusScope.of(context).unfocus();
+          SystemChannels.textInput.invokeMethod('TextInput.hide');
+        },
+        child: Column(
+          children: [
+            Expanded(
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('relationships')
+                    .doc(widget.relationshipId)
+                    .collection('messages')
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                return ListView.builder(
-                  controller: _scrollCtrl,
-                  reverse: true,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 16,
-                  ),
-                  itemCount: docs.length,
-                  itemBuilder: (context, i) {
-                    final doc = docs[i];
-                    final data = doc.data();
-                    final messageId = doc.id;
-                    _messageIndex[messageId] = i;
+                  final docs = snap.data!.docs;
+                  final aliveIds = docs.map((e) => e.id).toSet();
+                  _bubbleKeys.removeWhere((key, _) => !aliveIds.contains(key));
+                  if (AppRuntimeState.currentChatRelationshipId ==
+                      widget.relationshipId) {
+                    _updateReadMessageCountWithTotal(docs.length);
+                  }
+                  if (docs.isEmpty) {
+                    return const Center(child: Text('還沒有訊息 👀'));
+                  }
 
-                    final bubbleKey = _bubbleKeys.putIfAbsent(
-                      messageId,
-                      () => GlobalKey<_MessageBubbleState>(),
-                    );
+                  return ListView.builder(
+                    controller: _scrollCtrl,
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
+                    itemCount: docs.length,
+                    itemBuilder: (context, i) {
+                      final doc = docs[i];
+                      final data = doc.data();
+                      final messageId = doc.id;
+                      _messageIndex[messageId] = i;
 
-                    final text = data['text'] ?? '';
-                    final fromUid = data['fromUid'];
-                    final ts = data['createdAt'] as Timestamp?;
-                    final sent = data['sent'] == true;
-                    final isMe = fromUid == myUid;
-                    final time = ts != null
-                        ? TimeOfDay.fromDateTime(ts.toDate()).format(context)
-                        : '';
+                      final bubbleKey = _bubbleKeys.putIfAbsent(
+                        messageId,
+                        () => GlobalKey<_MessageBubbleState>(),
+                      );
 
-                    final type = data['type'] as String?;
-                    final petStatus = data['status'] as String?;
+                      final text = data['text'] ?? '';
+                      final fromUid = data['fromUid'];
+                      final ts = data['createdAt'] as Timestamp?;
+                      final sent = data['sent'] == true;
+                      final isMe = fromUid == myUid;
+                      final time = ts != null
+                          ? TimeOfDay.fromDateTime(ts.toDate()).format(context)
+                          : '';
 
-                    return SwipeToReplyWrapper(
-                      onReply: () {
-                        setState(() {
-                          _replyToMessageId = messageId;
-                          _replyToText = text;
-                          _replyToFromUid = fromUid;
-                        });
-                        FocusScope.of(context).requestFocus(_inputFocus);
-                      },
-                      child: _MessageBubble(
-                        key: bubbleKey,
-                        messageId: messageId,
-                        text: text,
-                        isMe: isMe,
-                        time: time,
-                        sent: sent,
-                        type: type,
-                        petStatus: petStatus,
-                        replyPreview: data['replyTo'],
-                        eventTitle: data['eventTitle'],
-                        remainText: data['remainText'],
-                        targetAt: data['targetAt'],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          if (_replyToText != null)
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceVariant,
-                border: Border(
-                  left: BorderSide(
-                    width: 4,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
+                      final type = data['type'] as String?;
+                      final petStatus = data['status'] as String?;
+
+                      return SwipeToReplyWrapper(
+                        onReply: () {
+                          setState(() {
+                            _replyToMessageId = messageId;
+                            _replyToText = text;
+                            _replyToFromUid = fromUid;
+                          });
+                          FocusScope.of(context).requestFocus(_inputFocus);
+                        },
+                        child: _MessageBubble(
+                          key: bubbleKey,
+                          messageId: messageId,
+                          text: text,
+                          isMe: isMe,
+                          time: time,
+                          sent: sent,
+                          type: type,
+                          petStatus: petStatus,
+                          replyPreview: data['replyTo'],
+                          eventTitle: data['eventTitle'],
+                          remainText: data['remainText'],
+                          targetAt: data['targetAt'],
+                          createdAt: data['createdAt'], // ⭐ 加這行
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '回覆：$_replyToText',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+            ),
+            if (_replyToText != null)
+              Container(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  border: Border(
+                    left: BorderSide(
+                      width: 4,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      setState(() {
-                        _replyToMessageId = null;
-                        _replyToText = null;
-                        _replyToFromUid = null;
-                      });
-                    },
-                  ),
-                ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '回覆：$_replyToText',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        setState(() {
+                          _replyToMessageId = null;
+                          _replyToText = null;
+                          _replyToFromUid = null;
+                        });
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-          _buildInputBar(context),
-        ],
+            _buildInputBar(context),
+          ],
+        ),
       ),
     );
   }
@@ -728,6 +738,7 @@ class _MessageBubble extends StatefulWidget {
   final String? eventTitle;
   final String? remainText;
   final Timestamp? targetAt;
+  final Timestamp? createdAt;
 
   const _MessageBubble({
     required this.messageId,
@@ -741,6 +752,7 @@ class _MessageBubble extends StatefulWidget {
     this.eventTitle,
     this.remainText,
     this.targetAt,
+    this.createdAt,
     super.key,
   });
 
@@ -787,38 +799,48 @@ class _MessageBubbleState extends State<_MessageBubble>
   void _updateRemainText() {
     final target = widget.targetAt!.toDate();
     final now = DateTime.now();
+
     final diff = target.difference(now);
 
-    if (diff.isNegative) {
+    // ⭐ 用 createdAt 判斷是否過期
+    final created = widget.createdAt?.toDate();
+
+    if (created != null) {
+      final aliveTime = now.difference(created);
+
+      if (aliveTime.inHours >= 12) {
+        setState(() {
+          _remainText = '倒數已過期';
+        });
+        _timer?.cancel();
+        return;
+      }
+    }
+
+    // ⭐ 還沒到
+    if (!diff.isNegative) {
+      final days = diff.inDays;
+      final hours = diff.inHours % 24;
+      final minutes = diff.inMinutes % 60;
+      final seconds = diff.inSeconds % 60;
+
+      List<String> parts = [];
+
+      if (days > 0) parts.add('$days 天');
+      if (hours > 0) parts.add('$hours 小時');
+      if (minutes > 0) parts.add('$minutes 分');
+      if (seconds > 0 || parts.isEmpty) parts.add('$seconds 秒');
+
       setState(() {
-        _remainText = '已經到了 🎉';
+        _remainText = '還有 ${parts.join(' ')}';
       });
-      _timer?.cancel();
+
       return;
     }
-    final days = diff.inDays;
-    final hours = diff.inHours % 24;
-    final minutes = diff.inMinutes % 60;
-    final seconds = diff.inSeconds % 60;
 
-    List<String> parts = [];
-
-    if (days > 0) {
-      parts.add('$days 天');
-    }
-    if (hours > 0) {
-      parts.add('$hours 小時');
-    }
-    if (minutes > 0) {
-      parts.add('$minutes 分');
-    }
-    if (seconds > 0 || parts.isEmpty) {
-      // ⭐ 如果全部都是 0，至少顯示秒
-      parts.add('$seconds 秒');
-    }
-
+    // ⭐ 到時間但未過期
     setState(() {
-      _remainText = '還有 ${parts.join(' ')}';
+      _remainText = '到了!!';
     });
   }
 
@@ -1044,6 +1066,9 @@ class _MessageBubbleState extends State<_MessageBubble>
   }
 
   Widget _buildCountdownUI(BuildContext context) {
+    final bool isExpired = _remainText.contains('過期');
+    final bool isReached = _remainText.contains('已經到了');
+
     return Align(
       alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
@@ -1056,16 +1081,31 @@ class _MessageBubbleState extends State<_MessageBubble>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.deepPurple.shade500, Colors.purple.shade300],
-                ),
+                gradient: isExpired
+                    ? LinearGradient(
+                        colors: [Colors.grey.shade600, Colors.grey.shade400],
+                      )
+                    : isReached
+                    ? LinearGradient(
+                        colors: [Colors.green.shade500, Colors.green.shade300],
+                      )
+                    : LinearGradient(
+                        colors: [
+                          Colors.deepPurple.shade500,
+                          Colors.purple.shade300,
+                        ],
+                      ),
                 borderRadius: BorderRadius.circular(22),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '距離 ${widget.eventTitle ?? ''}',
+                    isExpired
+                        ? '⏳ ${widget.eventTitle ?? ''} 已過期'
+                        : isReached
+                        ? '🎉 ${widget.eventTitle ?? ''} 已到！'
+                        : '距離 ${widget.eventTitle ?? ''}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -1081,8 +1121,6 @@ class _MessageBubbleState extends State<_MessageBubble>
               ),
             ),
             const SizedBox(height: 4),
-
-            // ⭐⭐ 下方顯示傳送時間
             Text(widget.time, style: Theme.of(context).textTheme.labelSmall),
           ],
         ),
@@ -1209,7 +1247,18 @@ class _MessageBubbleState extends State<_MessageBubble>
                         ),
                       ),
 
-                    Text(widget.text),
+                    GestureDetector(
+                      onLongPress: () {
+                        Clipboard.setData(ClipboardData(text: widget.text));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('已複製訊息'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      child: SelectableText(widget.text),
+                    ),
                   ],
                 ),
               ),
