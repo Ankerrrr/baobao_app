@@ -18,7 +18,8 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin {
   int _index = 0;
 
   final _pages = const [InteractiveBaby(), CalendarPage(), MoneyPage()];
@@ -50,6 +51,11 @@ class _HomePageState extends State<HomePage> {
       _synced = true;
       await AuthService.syncUserProfile();
     });
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   Stream<DocumentSnapshot<Map<String, dynamic>>> _myDocStream(String uid) {
@@ -267,6 +273,33 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Stream<QuerySnapshot<Map<String, dynamic>>> _todaySpecialStream() {
+    final now = DateTime.now();
+
+    return FirebaseFirestore.instance
+        .collection('special_days')
+        .where('month', isEqualTo: now.month)
+        .where('day', isEqualTo: now.day)
+        .where('isEnabled', isEqualTo: true)
+        .snapshots();
+  }
+
+  void _showFestivalDialog(BuildContext context, String title, String content) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('關閉'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authUser = FirebaseAuth.instance.currentUser;
@@ -287,189 +320,277 @@ class _HomePageState extends State<HomePage> {
         final DateTime? startDate = startTs?.toDate();
 
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('寶寶84'),
-
-            surfaceTintColor: const Color.fromARGB(255, 0, 0, 0),
-
-            // ✅ 左邊改成設定 icon + PopupMenu
-            leading: PopupMenuButton<String>(
-              tooltip: '選單',
-              icon: const Icon(Icons.arrow_drop_down_outlined),
-              onSelected: (value) async {
-                if (value == 'logout') {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('登出'),
-                      content: const Text('確定要登出嗎？'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('取消'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('登出'),
-                        ),
-                      ],
-                    ),
-                  );
-
-                  if (confirm == true) {
-                    await FirebaseAuth.instance.signOut();
-                    await GoogleSignIn().disconnect(); // ⭐ 強制下次選帳號
-                  }
-                }
-
-                if (value == 'invite') {
-                  if (!mounted) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const InvitePage()),
-                  );
-                }
-
-                if (value == 'settings') {
-                  if (!mounted) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingPage()),
-                  );
-                }
-
-                if (value == 'messages') {
-                  if (!mounted || partnerUid == null) return;
-
-                  final rid = ([authUser.uid, partnerUid]..sort()).join('_');
-
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => HeroControllerScope.none(
-                        child: MessagePage(
-                          key: messagePageStateKey, // ⭐⭐⭐
-                          relationshipId: rid,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-              },
-              itemBuilder: (context) => [
-                // 自己資訊（不可點）
-                PopupMenuItem<String>(
-                  enabled: false,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(100),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ⭐ 原本 AppBar（全部包進來）
+                AppBar(
+                  title: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(authUser.displayName ?? '使用者'),
-                      const SizedBox(height: 6),
-                      Text(
-                        authUser.email ?? '',
-                        style: Theme.of(context).textTheme.bodySmall,
+                      const Text('寶寶84'),
+
+                      const SizedBox(width: 8),
+
+                      // ⭐ 節日膠囊
+                      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: _todaySpecialStream(),
+                        builder: (context, snap) {
+                          if (!snap.hasData || snap.data!.docs.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final doc = snap.data!.docs.first;
+                          final title = doc['title'] ?? '';
+                          final content = doc['content'] ?? '';
+
+                          return GestureDetector(
+                            onTap: () {
+                              _showFestivalDialog(context, title, content);
+                            },
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: Container(
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      // 🔴 紅色背景 + 白色圓點
+                                      Positioned.fill(
+                                        child: CustomPaint(
+                                          painter: _DotPainter(),
+                                        ),
+                                      ),
+
+                                      // ⭐ 前景文字
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                        ),
+
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              title,
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
-                ),
-                const PopupMenuDivider(),
+                  surfaceTintColor: const Color.fromARGB(255, 0, 0, 0),
 
-                // 只有未綁定才顯示新增好友
-                if (partnerUid == null)
-                  const PopupMenuItem<String>(
-                    value: 'invite',
-                    child: Row(
-                      children: [
-                        Icon(Icons.person_add, size: 18),
-                        SizedBox(width: 8),
-                        Text('新增兄弟'),
-                      ],
+                  leading: PopupMenuButton<String>(
+                    tooltip: '選單',
+                    icon: const Icon(Icons.arrow_drop_down_outlined),
+                    onSelected: (value) async {
+                      if (value == 'logout') {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('登出'),
+                            content: const Text('確定要登出嗎？'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('取消'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('登出'),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        if (confirm == true) {
+                          await FirebaseAuth.instance.signOut();
+                          await GoogleSignIn().disconnect(); // ⭐ 強制下次選帳號
+                        }
+                      }
+
+                      if (value == 'invite') {
+                        if (!mounted) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const InvitePage()),
+                        );
+                      }
+
+                      if (value == 'settings') {
+                        if (!mounted) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SettingPage(),
+                          ),
+                        );
+                      }
+
+                      if (value == 'messages') {
+                        if (!mounted || partnerUid == null) return;
+
+                        final rid = ([
+                          authUser.uid,
+                          partnerUid,
+                        ]..sort()).join('_');
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => HeroControllerScope.none(
+                              child: MessagePage(
+                                key: messagePageStateKey, // ⭐⭐⭐
+                                relationshipId: rid,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      // 自己資訊（不可點）
+                      PopupMenuItem<String>(
+                        enabled: false,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(authUser.displayName ?? '使用者'),
+                            const SizedBox(height: 6),
+                            Text(
+                              authUser.email ?? '',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+
+                      // 只有未綁定才顯示新增好友
+                      if (partnerUid == null)
+                        const PopupMenuItem<String>(
+                          value: 'invite',
+                          child: Row(
+                            children: [
+                              Icon(Icons.person_add, size: 18),
+                              SizedBox(width: 8),
+                              Text('新增兄弟'),
+                            ],
+                          ),
+                        ),
+
+                      const PopupMenuItem<String>(
+                        value: 'settings',
+                        child: Row(
+                          children: [
+                            Icon(Icons.tune, size: 18),
+                            SizedBox(width: 8),
+                            Text('設定'),
+                          ],
+                        ),
+                      ),
+
+                      const PopupMenuItem<String>(
+                        value: 'messages',
+                        child: Row(
+                          children: [
+                            Icon(Icons.chat_bubble_outline, size: 18),
+                            SizedBox(width: 8),
+                            Text('訊息'),
+                          ],
+                        ),
+                      ),
+
+                      const PopupMenuItem<String>(
+                        value: 'logout',
+                        child: Row(
+                          children: [
+                            Icon(Icons.logout, size: 18),
+                            SizedBox(width: 8),
+                            Text('登出'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () {
+                          _showDetailsSheet(
+                            context,
+                            authUser: authUser,
+                            partnerUid: partnerUid,
+                            startDate: startDate,
+                            myNickname: myNickname,
+                            relationshipId: partnerUid == null
+                                ? null
+                                : ([
+                                    authUser.uid,
+                                    partnerUid,
+                                  ]..sort()).join('_'),
+                            myAnimalId:
+                                myData?['relationship']?['animal'] as String?,
+                          );
+                        },
+                        child: partnerUid == null
+                            ? CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.primaryContainer,
+                                backgroundImage: authUser.photoURL != null
+                                    ? NetworkImage(authUser.photoURL!)
+                                    : null,
+                                child: authUser.photoURL == null
+                                    ? const Icon(Icons.person, size: 16)
+                                    : null,
+                              )
+                            : StreamBuilder<
+                                DocumentSnapshot<Map<String, dynamic>>
+                              >(
+                                stream: _userDocStream(partnerUid),
+                                builder: (context, pSnap) {
+                                  final p = pSnap.data?.data();
+                                  final partnerPhotoURL =
+                                      (p?['photoURL'] as String?) ?? '';
+
+                                  return _CoupleAvatar(
+                                    myPhotoURL: authUser.photoURL,
+                                    partnerPhotoURL: partnerPhotoURL,
+                                  );
+                                },
+                              ),
+                      ),
                     ),
-                  ),
-
-                const PopupMenuItem<String>(
-                  value: 'settings',
-                  child: Row(
-                    children: [
-                      Icon(Icons.tune, size: 18),
-                      SizedBox(width: 8),
-                      Text('設定'),
-                    ],
-                  ),
-                ),
-
-                const PopupMenuItem<String>(
-                  value: 'messages',
-                  child: Row(
-                    children: [
-                      Icon(Icons.chat_bubble_outline, size: 18),
-                      SizedBox(width: 8),
-                      Text('訊息'),
-                    ],
-                  ),
-                ),
-
-                const PopupMenuItem<String>(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout, size: 18),
-                      SizedBox(width: 8),
-                      Text('登出'),
-                    ],
-                  ),
+                  ],
                 ),
               ],
             ),
-
-            // ✅ 右邊改成兩人頭貼：點了開詳細資訊
-            actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: () {
-                    _showDetailsSheet(
-                      context,
-                      authUser: authUser,
-                      partnerUid: partnerUid,
-                      startDate: startDate,
-                      myNickname: myNickname,
-                      relationshipId: partnerUid == null
-                          ? null
-                          : ([authUser.uid, partnerUid]..sort()).join('_'),
-                      myAnimalId: myData?['relationship']?['animal'] as String?,
-                    );
-                  },
-                  child: partnerUid == null
-                      ? CircleAvatar(
-                          radius: 16,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer,
-                          backgroundImage: authUser.photoURL != null
-                              ? NetworkImage(authUser.photoURL!)
-                              : null,
-                          child: authUser.photoURL == null
-                              ? const Icon(Icons.person, size: 16)
-                              : null,
-                        )
-                      : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                          stream: _userDocStream(partnerUid),
-                          builder: (context, pSnap) {
-                            final p = pSnap.data?.data();
-                            final partnerPhotoURL =
-                                (p?['photoURL'] as String?) ?? '';
-
-                            return _CoupleAvatar(
-                              myPhotoURL: authUser.photoURL,
-                              partnerPhotoURL: partnerPhotoURL,
-                            );
-                          },
-                        ),
-                ),
-              ),
-            ],
           ),
 
           body: IndexedStack(index: _index, children: _pages),
@@ -698,4 +819,34 @@ class _AvatarWithAnimal extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DotPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 🔴 紅色底
+    final bgPaint = Paint()..color = const Color(0xFFD32F2F); // 好看的紅
+
+    final rect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(999),
+    );
+
+    canvas.drawRRect(rect, bgPaint);
+
+    // ⚪ 白色小圓點
+    final dotPaint = Paint()..color = const Color.fromARGB(62, 255, 255, 255);
+
+    const dotRadius = 0.8; // 更小
+    const spacing = 8.0;
+
+    for (double x = 0; x < size.width; x += spacing) {
+      for (double y = 0; y < size.height; y += spacing) {
+        canvas.drawCircle(Offset(x + 4, y + 4), dotRadius, dotPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
