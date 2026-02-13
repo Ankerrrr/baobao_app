@@ -89,6 +89,9 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
   int _currentReadCount = 0;
 
+  ImageProvider? _partnerAvatar;
+  ImageProvider? _myAvatar;
+
   @override
   void initState() {
     super.initState();
@@ -208,7 +211,6 @@ class _InteractiveBabyState extends State<InteractiveBaby>
   void _queueSelfFloat(int delta) {
     _pendingSelfDelta += delta;
 
-    // 每次點都重設 timer
     _selfFloatTimer?.cancel();
 
     _selfFloatTimer = Timer(_selfFloatWindow, () {
@@ -221,11 +223,15 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
       final id = _partnerFloatId++;
       final dx = Random().nextDouble() * 60 - 30;
-      final myPhotoUrl = FirebaseAuth.instance.currentUser?.photoURL;
 
       setState(() {
         _partnerFloats.add(
-          _PartnerFloat(id: id, delta: merged, dx: dx, photoUrl: myPhotoUrl),
+          _PartnerFloat(
+            id: id,
+            delta: merged,
+            dx: dx,
+            avatar: _myAvatar, // ⭐ 改成用 preload
+          ),
         );
       });
     });
@@ -445,7 +451,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
 
     setState(() {
       _partnerFloats.add(
-        _PartnerFloat(id: id, delta: delta, dx: dx, photoUrl: _partnerPhotoUrl),
+        _PartnerFloat(id: id, delta: delta, dx: dx, avatar: _partnerAvatar),
       );
     });
   }
@@ -687,6 +693,35 @@ class _InteractiveBabyState extends State<InteractiveBaby>
     );
   }
 
+  Future<void> _preloadAvatars(String myUid, String partnerUid) async {
+    final myUrl = FirebaseAuth.instance.currentUser?.photoURL;
+
+    if (myUrl != null) {
+      final provider = NetworkImage(myUrl);
+      await precacheImage(provider, context);
+      if (mounted) {
+        _myAvatar = provider;
+      }
+    }
+
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(partnerUid)
+          .get();
+
+      final partnerUrl = snap.data()?['photoURL'] as String?;
+
+      if (partnerUrl != null) {
+        final provider = NetworkImage(partnerUrl);
+        await precacheImage(provider, context);
+        if (mounted) {
+          _partnerAvatar = provider;
+        }
+      }
+    } catch (_) {}
+  }
+
   // ===== Build =====
 
   @override
@@ -725,6 +760,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
         if (_relationshipId != relationshipId) {
           _relationshipId = relationshipId;
           _startMessagePolling(relationshipId, uid);
+          _preloadAvatars(uid, partnerUid);
         }
 
         return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -842,7 +878,7 @@ class _InteractiveBabyState extends State<InteractiveBaby>
                               key: ValueKey('pf_${p.id}'),
                               delta: p.delta,
                               startDx: p.dx,
-                              photoUrl: p.photoUrl,
+                              avatar: p.avatar,
                               onDone: () => _removePartnerFloat(p.id),
                             ),
                           ),
@@ -931,7 +967,7 @@ class _BabyBody extends StatelessWidget {
                 key: ValueKey('pf_${p.id}'),
                 delta: p.delta,
                 startDx: p.dx,
-                photoUrl: p.photoUrl, // ⭐ 傳進來
+                avatar: p.avatar,
                 onDone: () => onPartnerFloatDone(p.id),
               ),
             ),
@@ -1551,13 +1587,13 @@ class _PartnerFloat {
   final int id;
   final int delta;
   final double dx;
-  final String? photoUrl;
+  final ImageProvider? avatar;
 
   const _PartnerFloat({
     required this.id,
     required this.delta,
     required this.dx,
-    required this.photoUrl,
+    required this.avatar,
   });
 }
 
@@ -1565,13 +1601,13 @@ class _UserFloat extends StatefulWidget {
   final int delta;
   final double startDx;
   final VoidCallback onDone;
-  final String? photoUrl;
+  final ImageProvider? avatar;
 
   const _UserFloat({
     super.key,
     required this.delta,
     required this.startDx,
-    required this.photoUrl,
+    required this.avatar,
     required this.onDone,
   });
 
@@ -1633,9 +1669,10 @@ class _UserFloatState extends State<_UserFloat>
               CircleAvatar(
                 radius: 16,
                 backgroundColor: Colors.grey.shade200,
-                backgroundImage: widget.photoUrl != null
-                    ? NetworkImage(widget.photoUrl!)
-                    : const AssetImage('assets/images/partner.png'),
+                backgroundImage: widget.avatar,
+                child: widget.avatar == null
+                    ? const Icon(Icons.person, size: 18)
+                    : null,
               ),
               const SizedBox(width: 6),
 

@@ -514,6 +514,7 @@ class _MessagePageState extends State<MessagePage> {
 
     final db = FirebaseFirestore.instance;
     final relRef = db.collection('relationships').doc(widget.relationshipId);
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
 
     final relSnap = await relRef.get();
     final countdown = relSnap.data()?['countdown'];
@@ -530,32 +531,34 @@ class _MessagePageState extends State<MessagePage> {
 
     if (targetTimestamp == null) return;
 
-    final target = targetTimestamp.toDate();
-    final now = DateTime.now();
-    final diff = target.difference(now);
-
-    String remainText;
-
-    if (diff.isNegative) {
-      remainText = '已經到了 🎉';
-    } else {
-      final totalSeconds = diff.inSeconds;
-
-      final hours = totalSeconds ~/ 3600;
-      final minutes = (totalSeconds % 3600) ~/ 60;
-      final seconds = totalSeconds % 60;
-
-      remainText = '還有 $hours 小時 $minutes 分 $seconds 秒';
-    }
-
+    // ⭐ ① 存訊息
     await relRef.collection('messages').add({
       'type': 'countdown',
       'text': '距離 $eventTitle 的倒數計時',
       'eventTitle': eventTitle,
       'targetAt': targetTimestamp,
       'createdAt': FieldValue.serverTimestamp(),
-      'fromUid': FirebaseAuth.instance.currentUser!.uid,
+      'fromUid': myUid,
     });
+
+    // ⭐ ② 找 partnerUid
+    final mySnap = await db.collection('users').doc(myUid).get();
+    final partnerUid = mySnap.data()?['partnerUid'];
+    if (partnerUid == null) return;
+
+    // ⭐ ③ 找顯示名稱
+    final partnerSnap = await db.collection('users').doc(partnerUid).get();
+    final myNickname = partnerSnap.data()?['relationship']?['nickname'];
+    final title = (myNickname != null && myNickname.isNotEmpty)
+        ? myNickname
+        : '對方';
+
+    // ⭐ ④ 發通知
+    await NotificationService.instance.sendToPartner(
+      relationshipId: widget.relationshipId,
+      title: title,
+      text: '發送了一個倒數計時：$eventTitle',
+    );
   }
 
   void _showBatteryStale(
