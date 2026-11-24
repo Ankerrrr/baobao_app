@@ -19,6 +19,7 @@ class _SettingPageState extends State<SettingPage> {
   bool _countdownEnabled = false;
   Map<String, dynamic>? _countdownEvent;
   bool _countdownNotifyEnabled = false;
+  bool _calendarIncludeBills = true;
 
   String? _relationshipId;
 
@@ -96,6 +97,9 @@ class _SettingPageState extends State<SettingPage> {
     final animal = (rel is Map) ? rel['animal'] as String? : null;
     final ts = (rel is Map) ? rel['startDate'] : null;
     final nick = (rel is Map) ? (rel['nickname'] as String?) : null;
+    final includeBillsRaw = (rel is Map) ? rel['calendarIncludeBills'] : null;
+    _calendarIncludeBills =
+        includeBillsRaw is bool ? includeBillsRaw : true;
 
     // ⭐ 取得 relationshipId
     final partnerUid = data?['partnerUid'] as String?;
@@ -130,6 +134,7 @@ class _SettingPageState extends State<SettingPage> {
     DateTime? startDate,
     String? nickname,
     String? animal,
+    bool? calendarIncludeBills,
   }) async {
     if (_saving) return;
     setState(() => _saving = true);
@@ -180,6 +185,16 @@ class _SettingPageState extends State<SettingPage> {
       };
 
       batch.set(myRef, animalPayload, SetOptions(merge: true));
+    }
+
+    if (calendarIncludeBills != null) {
+      final payload = {
+        'relationship': {
+          'calendarIncludeBills': calendarIncludeBills,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      };
+      batch.set(myRef, payload, SetOptions(merge: true));
     }
 
     await batch.commit();
@@ -478,6 +493,22 @@ class _SettingPageState extends State<SettingPage> {
                 ),
 
                 const Divider(),
+
+                // 💰 分帳整合到日曆
+                SwitchListTile(
+                  secondary: const Icon(Icons.payments_outlined),
+                  title: const Text('分帳整合到日曆'),
+                  subtitle: const Text('關閉後日曆只顯示活動，不顯示分帳'),
+                  value: _calendarIncludeBills,
+                  onChanged: _saving
+                      ? null
+                      : (v) async {
+                          setState(() {
+                            _calendarIncludeBills = v;
+                          });
+                          await _saveRelationship(calendarIncludeBills: v);
+                        },
+                ),
 
                 // ⏱️ 倒數計時器標題
                 Padding(

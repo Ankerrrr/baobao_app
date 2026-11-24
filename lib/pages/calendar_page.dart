@@ -28,9 +28,37 @@ class _CalendarPageState extends State<CalendarPage> {
   DateTime? _loadedMonth;
 
   final Map<String, Set<String>> _eventCreators = {};
+  final Set<String> _eventDaysFromEvents = {};
+  final Set<String> _eventDaysFromBills = {};
+  final Map<String, Set<String>> _eventCreatorsFromEvents = {};
+  final Map<String, Set<String>> _eventCreatorsFromBills = {};
   String? _myAnimal;
   String? _partnerAnimal;
   StreamSubscription? _monthSub;
+  StreamSubscription? _monthBillSub;
+  StreamSubscription? _settingsSub;
+
+  bool _includeBillsInCalendar = true;
+  String? _relationshipIdCache;
+
+  void _rebuildMonthMarkers() {
+    _eventDays
+      ..clear()
+      ..addAll(_eventDaysFromEvents)
+      ..addAll(_eventDaysFromBills);
+
+    _eventCreators.clear();
+
+    void mergeIn(Map<String, Set<String>> source) {
+      for (final entry in source.entries) {
+        _eventCreators.putIfAbsent(entry.key, () => {});
+        _eventCreators[entry.key]!.addAll(entry.value);
+      }
+    }
+
+    // 代表動物 icon 只反映「活動(events)」的建立者，不包含分帳
+    mergeIn(_eventCreatorsFromEvents);
+  }
 
   @override
   void initState() {
@@ -38,6 +66,24 @@ class _CalendarPageState extends State<CalendarPage> {
     _relationshipFuture = _getRelationshipId();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadNicknames();
+    });
+
+    _settingsSub = _db.collection('users').doc(myUid).snapshots().listen((doc) {
+      final rel = doc.data()?['relationship'];
+      bool v = true;
+      if (rel is Map) {
+        final raw = rel['calendarIncludeBills'];
+        if (raw is bool) v = raw;
+      }
+      if (v == _includeBillsInCalendar) return;
+      setState(() {
+        _includeBillsInCalendar = v;
+      });
+
+      final relId = _relationshipIdCache;
+      if (relId != null) {
+        _loadMonthEventDays(relId, _focusedDay);
+      }
     });
   }
 
@@ -128,14 +174,47 @@ class _CalendarPageState extends State<CalendarPage> {
           return snap.docs.map((d) {
             final data = d.data();
             final ts = data['time'] as Timestamp?;
+            final type = (data['type'] as String?) ?? 'event';
             return _Event(
               id: d.id,
               title: data['title'],
               detail: (data['detail'] ?? '') as String,
               createdBy: data['createdBy'] as String,
               time: ts?.toDate(),
+              type: type,
             );
           }).toList();
+        });
+  }
+
+  Stream<List<_BillEntry>> _billsStream(String relationshipId, DateTime day) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(day);
+    return _db
+        .collection('relationships')
+        .doc(relationshipId)
+        .collection('bills')
+        .where('date', isEqualTo: dateStr)
+        .snapshots()
+        .map((snap) {
+          final items = snap.docs.map((d) {
+            final data = d.data();
+            return _BillEntry(
+              id: d.id,
+              title: (data['title'] ?? '') as String,
+              amount: (data['amount'] as num).toDouble(),
+              payerUid: data['payerUid'] as String,
+              myShare: (data['myShare'] as num).toDouble(),
+              settled: (data['settled'] ?? false) as bool,
+              date: dateStr,
+            );
+          }).toList();
+
+          items.sort((a, b) {
+            // 同一天內用 id 近似穩定排序（避免需要 Firestore index）
+            return b.id.compareTo(a.id);
+          });
+
+          return items;
         });
   }
 
@@ -177,6 +256,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
     // ⭐ 先取消舊監聽
     await _monthSub?.cancel();
+    await _monthBillSub?.cancel();
 
     _monthSub = _db
         .collection('relationships')
@@ -186,19 +266,59 @@ class _CalendarPageState extends State<CalendarPage> {
         .where('date', isLessThanOrEqualTo: endStr)
         .snapshots()
         .listen((snap) {
-          _eventDays.clear();
-          _eventCreators.clear();
+          _eventDaysFromEvents.clear();
+          _eventCreatorsFromEvents.clear();
 
           for (var d in snap.docs) {
-            final date = d['date'] as String;
-            final createdBy = d['createdBy'] as String;
+            final data = d.data();
+            final date = data['date'] as String;
+            final createdBy = data['createdBy'] as String;
+            final type = (data['type'] as String?) ?? 'event';
+            if (type == 'bill') continue; // 忽略舊版分帳同步到 events 的殘留資料
 
-            _eventDays.add(date);
-
-            _eventCreators.putIfAbsent(date, () => {});
-            _eventCreators[date]!.add(createdBy);
+            _eventDaysFromEvents.add(date);
+            _eventCreatorsFromEvents.putIfAbsent(date, () => {});
+            _eventCreatorsFromEvents[date]!.add(createdBy);
           }
 
+          _rebuildMonthMarkers();
+          setState(() {});
+        });
+
+    if (!_includeBillsInCalendar) {
+      _eventDaysFromBills.clear();
+      _eventCreatorsFromBills.clear();
+      _rebuildMonthMarkers();
+      setState(() {});
+      return;
+    }
+
+    // bills：也要影響月曆小點 + 建立者 icon
+    _monthBillSub = _db
+        .collection('relationships')
+        .doc(relationshipId)
+        .collection('bills')
+        .where('date', isGreaterThanOrEqualTo: startStr)
+        .where('date', isLessThanOrEqualTo: endStr)
+        .snapshots()
+        .listen((snap) {
+          _eventDaysFromBills.clear();
+          _eventCreatorsFromBills.clear();
+
+          for (var d in snap.docs) {
+            final data = d.data();
+            final date = data['date'] as String?;
+            final payerUid = data['payerUid'] as String?;
+            if (date == null) continue;
+
+            _eventDaysFromBills.add(date);
+            if (payerUid != null) {
+              _eventCreatorsFromBills.putIfAbsent(date, () => {});
+              _eventCreatorsFromBills[date]!.add(payerUid);
+            }
+          }
+
+          _rebuildMonthMarkers();
           setState(() {});
         });
   }
@@ -206,6 +326,8 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void dispose() {
     _monthSub?.cancel();
+    _monthBillSub?.cancel();
+    _settingsSub?.cancel();
     super.dispose();
   }
 
@@ -221,6 +343,8 @@ class _CalendarPageState extends State<CalendarPage> {
         if (relationshipId == null) {
           return const Center(child: Text('尚未綁定對象'));
         }
+
+        _relationshipIdCache = relationshipId;
 
         // ⭐ 初始化當日事件 stream
         _eventStream ??= _eventsStream(relationshipId, _selectedDay);
@@ -267,11 +391,15 @@ class _CalendarPageState extends State<CalendarPage> {
                 calendarBuilders: CalendarBuilders(
                   markerBuilder: (context, day, events) {
                     final key = DateFormat('yyyy-MM-dd').format(day);
-                    if (!_eventCreators.containsKey(key)) return null;
+                    final hasBills = _includeBillsInCalendar &&
+                        _eventDaysFromBills.contains(key);
 
-                    final creators = _eventCreators[key]!;
+                    final creators =
+                        _eventCreatorsFromEvents[key] ?? const <String>{};
+
                     List<String> emojis = [];
 
+                    // 活動才顯示代表動物
                     if (creators.contains(myUid) && _myAnimal != null) {
                       emojis.add(_getAnimalEmoji(_myAnimal));
                     }
@@ -281,6 +409,11 @@ class _CalendarPageState extends State<CalendarPage> {
                           emojis.add(_getAnimalEmoji(_partnerAnimal));
                         }
                       }
+                    }
+
+                    // 分帳只顯示 💰（不影響動物）
+                    if (hasBills) {
+                      emojis.add('💰');
                     }
 
                     if (emojis.isEmpty) return null;
@@ -339,96 +472,239 @@ class _CalendarPageState extends State<CalendarPage> {
                     if (eventSnap.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
                     }
-                    final List<_Event> events = eventSnap.data ?? <_Event>[];
-                    if (events.isEmpty) {
-                      return const Center(child: Text('當日沒有活動'));
+                    final events = (eventSnap.data ?? <_Event>[])
+                        .where((e) => e.type != 'bill') // 忽略舊版殘留的 bill 類 events
+                        .toList();
+
+                    if (!_includeBillsInCalendar) {
+                      if (events.isEmpty) {
+                        return const Center(child: Text('當日沒有活動'));
+                      }
+
+                      return ListView.separated(
+                        physics: const BouncingScrollPhysics(),
+                        padding: const EdgeInsets.only(bottom: 120),
+                        itemCount: events.length,
+                        separatorBuilder: (_, __) => const Divider(
+                          height: 1,
+                          thickness: 0.6,
+                          color: Color(0xFF2C2C2C),
+                        ),
+                        itemBuilder: (context, i) {
+                          final e = events[i];
+                          return Dismissible(
+                            key: ValueKey(e.id),
+                            direction: DismissDirection.endToStart,
+                            background: Container(
+                              alignment: Alignment.centerRight,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 20),
+                              color: Colors.redAccent,
+                              child: const Icon(
+                                Icons.delete,
+                                color: Colors.white,
+                              ),
+                            ),
+                            confirmDismiss: (direction) async {
+                              return await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('刪除活動'),
+                                  content: const Text('確定要刪除這個活動嗎？'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, false),
+                                      child: const Text('取消'),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, true),
+                                      child: const Text('刪除'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            onDismissed: (direction) {
+                              _deleteEvent(relationshipId, e);
+                            },
+                            child: InkWell(
+                              onTap: () => _editEvent(relationshipId, e),
+                              child: ListTile(
+                                leading: const Icon(Icons.event),
+                                title: Text(e.title),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (e.time != null)
+                                      Text(
+                                        DateFormat('HH:mm').format(e.time!),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.orangeAccent,
+                                        ),
+                                      ),
+                                    if (e.detail.isNotEmpty)
+                                      Text(
+                                        e.detail,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                  ],
+                                ),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '新增人: ${_nicknameMap[e.createdBy] ?? '未知'}',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
                     }
 
-                    return ListView.separated(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.only(bottom: 120),
-                      itemCount: events.length,
-                      // ⭐ 每筆下面的框線
-                      separatorBuilder: (_, __) => const Divider(
-                        height: 1,
-                        thickness: 0.6,
-                        color: Color(0xFF2C2C2C), // 深色柔和線
-                      ),
-                      itemBuilder: (context, i) {
-                        final e = events[i];
-                        return Dismissible(
-                          key: ValueKey(e.id), // ⭐ 一定要唯一
-                          direction: DismissDirection.endToStart,
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            color: Colors.redAccent,
-                            child: const Icon(
-                              Icons.delete,
-                              color: Colors.white,
-                            ),
+                    return StreamBuilder<List<_BillEntry>>(
+                      stream: _billsStream(relationshipId, _selectedDay),
+                      builder: (context, billSnap) {
+                        if (billSnap.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+
+                        final bills = billSnap.data ?? <_BillEntry>[];
+                        final allBills = bills;
+                        final totalCount = allBills.length + events.length;
+
+                        if (totalCount == 0) {
+                          return const Center(
+                            child: Text('當日沒有分帳或活動'),
+                          );
+                        }
+
+                        return ListView.separated(
+                          physics: const BouncingScrollPhysics(),
+                          padding: const EdgeInsets.only(bottom: 120),
+                          itemCount: totalCount,
+                          separatorBuilder: (_, __) => const Divider(
+                            height: 1,
+                            thickness: 0.6,
+                            color: Color(0xFF2C2C2C),
                           ),
-                          confirmDismiss: (direction) async {
-                            return await showDialog<bool>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('刪除活動'),
-                                content: const Text('確定要刪除這個活動嗎？'),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx, false),
-                                    child: const Text('取消'),
+                          itemBuilder: (context, i) {
+                            if (i < allBills.length) {
+                              final b = allBills[i];
+                              final payerName =
+                                  _nicknameMap[b.payerUid] ?? '未知';
+                              return ListTile(
+                                leading: const Icon(Icons.receipt_long),
+                                title: Text(
+                                  b.settled ? '分帳：${b.title} ✅' : '分帳：${b.title}',
+                                ),
+                                subtitle: Text('付款人：$payerName'),
+                                trailing: Text(
+                                  '\$${b.amount.toStringAsFixed(0)}',
+                                  style: TextStyle(
+                                    color: b.settled
+                                        ? Colors.grey
+                                        : Colors.orangeAccent,
                                   ),
-                                  ElevatedButton(
-                                    onPressed: () => Navigator.pop(ctx, true),
-                                    child: const Text('刪除'),
+                                ),
+                              );
+                            }
+
+                            final e = events[i - allBills.length];
+                            return Dismissible(
+                              key: ValueKey(e.id),
+                              direction: DismissDirection.endToStart,
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 20),
+                                color: Colors.redAccent,
+                                child: const Icon(
+                                  Icons.delete,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              confirmDismiss: (direction) async {
+                                return await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('刪除活動'),
+                                    content: const Text('確定要刪除這個活動嗎？'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('取消'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: const Text('刪除'),
+                                      ),
+                                    ],
                                   ),
-                                ],
+                                );
+                              },
+                              onDismissed: (direction) {
+                                _deleteEvent(relationshipId, e);
+                              },
+                              child: InkWell(
+                                onTap: () => _editEvent(relationshipId, e),
+                                child: ListTile(
+                                  leading: const Icon(Icons.event),
+                                  title: Text(e.title),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (e.time != null)
+                                        Text(
+                                          DateFormat('HH:mm').format(e.time!),
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.orangeAccent,
+                                          ),
+                                        ),
+                                      if (e.detail.isNotEmpty)
+                                        Text(
+                                          e.detail,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                                  trailing: Column(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        '新增人: ${_nicknameMap[e.createdBy] ?? '未知'}',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             );
                           },
-                          onDismissed: (direction) {
-                            _deleteEvent(relationshipId, e);
-                          },
-                          child: InkWell(
-                            onTap: () => _editEvent(relationshipId, e),
-                            child: ListTile(
-                              leading: const Icon(Icons.event),
-                              title: Text(e.title),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (e.time != null)
-                                    Text(
-                                      DateFormat('HH:mm').format(e.time!),
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.orangeAccent,
-                                      ),
-                                    ),
-                                  if (e.detail.isNotEmpty)
-                                    Text(
-                                      e.detail,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                ],
-                              ),
-                              trailing: Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '新增人: ${_nicknameMap[e.createdBy] ?? '未知'}',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
                         );
                       },
                     );
@@ -542,6 +818,7 @@ class _Event {
   final String detail;
   final String createdBy;
   final DateTime? time;
+  final String type; // event | bill
 
   _Event({
     required this.id,
@@ -549,6 +826,27 @@ class _Event {
     required this.detail,
     required this.createdBy,
     this.time,
+    this.type = 'event',
+  });
+}
+
+class _BillEntry {
+  final String id;
+  final String title;
+  final double amount;
+  final String payerUid;
+  final double myShare;
+  final bool settled;
+  final String date; // yyyy-MM-dd
+
+  _BillEntry({
+    required this.id,
+    required this.title,
+    required this.amount,
+    required this.payerUid,
+    required this.myShare,
+    required this.settled,
+    required this.date,
   });
 }
 
